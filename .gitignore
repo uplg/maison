@@ -70,3 +70,7 @@ hue-lamps-blacklist.json
 logs/
 
 scripts/ssl/*
+
+*.pyc
+__pycache__
+tempo-prediction/cache

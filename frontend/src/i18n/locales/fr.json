@@ -289,6 +289,32 @@
       "blue": "Jour le moins cher",
       "white": "Tarif intermédiaire",
       "red": "Jour le plus cher"
+    },
+    "prediction": {
+      "title": "Prédictions Tempo",
+      "subtitle": "Prévisions IA sur 7 jours des couleurs Tempo EDF",
+      "weekForecast": "Prévisions de la semaine",
+      "confidence": "Confiance",
+      "season": "Saison",
+      "redDays": "Jours rouges",
+      "whiteDays": "Jours blancs",
+      "used": "utilisés",
+      "remaining": "restants",
+      "redPeriod": "Période rouge",
+      "outsideRedPeriod": "Hors période rouge",
+      "redBlocked": "Rouge impossible",
+      "whiteBlocked": "Blanc impossible",
+      "error": "Erreur lors du chargement des prédictions",
+      "errorHint": "Assurez-vous que le serveur de prédictions est démarré (python -m tempo_prediction.server)",
+      "howItWorks": "Comment ça marche ?",
+      "explanation": "Les prédictions sont basées sur l'algorithme officiel RTE (seuils de consommation normalisée) combiné à un modèle d'apprentissage automatique. Le modèle utilise les données historiques de consommation, les prévisions météo et les contraintes réglementaires (22 jours rouges max entre nov-mars, 43 jours blancs max par an)."
+    },
+    "calendar": {
+      "title": "Calendrier Tempo",
+      "prediction": "Prédiction",
+      "actual": "Réel",
+      "predictionsCount": "Prédictions",
+      "info": "Les couleurs pleines indiquent les jours passés réels. Les bordures en pointillés indiquent les prédictions IA pour les jours à venir. Survolez pour plus de détails."
     }
   }
 }

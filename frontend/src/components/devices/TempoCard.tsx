@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 import { tempoApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Zap, Calendar, ArrowRight, Euro } from 'lucide-react'
+import { Zap, Calendar, ArrowRight, Euro, TrendingUp } from 'lucide-react'
 
 type TempoColor = 'BLUE' | 'WHITE' | 'RED' | null
 
@@ -92,6 +93,7 @@ function TempoSkeleton() {
 
 export function TempoCard() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['tempo'],
@@ -133,11 +135,15 @@ export function TempoCard() {
   return (
     <Card className="border-l-4 border-l-yellow-500">
       <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle 
+          className="flex items-center gap-2 text-base cursor-pointer hover:text-yellow-600 transition-colors group"
+          onClick={() => navigate('/tempo-predictions')}
+        >
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-yellow-100 text-yellow-600">
             <Calendar className="h-4 w-4" />
           </div>
-          {t('tempo.title')}
+          <span className="flex-1">{t('tempo.title')}</span>
+          <TrendingUp className="h-4 w-4 text-muted-foreground group-hover:text-yellow-600 transition-colors" />
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">

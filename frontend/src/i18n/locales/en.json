@@ -289,6 +289,32 @@
       "blue": "Cheapest day",
       "white": "Standard rate",
       "red": "Most expensive day"
+    },
+    "prediction": {
+      "title": "Tempo Predictions",
+      "subtitle": "7-day AI forecast for EDF Tempo colors",
+      "weekForecast": "Week Forecast",
+      "confidence": "Confidence",
+      "season": "Season",
+      "redDays": "Red days",
+      "whiteDays": "White days",
+      "used": "used",
+      "remaining": "remaining",
+      "redPeriod": "Red period",
+      "outsideRedPeriod": "Outside red period",
+      "redBlocked": "Red unavailable",
+      "whiteBlocked": "White unavailable",
+      "error": "Error loading predictions",
+      "errorHint": "Make sure the prediction server is running (python -m tempo_prediction.server)",
+      "howItWorks": "How does it work?",
+      "explanation": "Predictions are based on the official RTE algorithm (normalized consumption thresholds) combined with a machine learning model. The model uses historical consumption data, weather forecasts, and regulatory constraints (max 22 red days Nov-Mar, max 43 white days per year)."
+    },
+    "calendar": {
+      "title": "Tempo Calendar",
+      "prediction": "Prediction",
+      "actual": "Actual",
+      "predictionsCount": "Predictions",
+      "info": "Solid colors show actual past days. Dashed borders indicate AI predictions for upcoming days. Hover for details."
     }
   }
 }

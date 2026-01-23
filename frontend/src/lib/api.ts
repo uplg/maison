@@ -403,4 +403,134 @@ export const tempoApi = {
     api<TempoData>("/tempo/refresh", {
       method: "POST",
     }),
+
+  getPredictions: () => api<TempoPredictionsData>("/tempo/predictions"),
+
+  getState: () => api<TempoStateData>("/tempo/state"),
+
+  getCalendar: (season?: string) =>
+    api<TempoCalendarData>(
+      `/tempo/calendar${season ? `?season=${season}` : ""}`,
+    ),
+
+  getHistory: (season?: string) =>
+    api<TempoHistoryData>(
+      `/tempo/history${season ? `?season=${season}` : ""}`,
+    ),
+
+  getCalibration: () => api<TempoCalibrationData>("/tempo/calibration"),
 };
+
+// Tempo prediction types
+export interface TempoPrediction {
+  date: string;
+  predicted_color: "BLUE" | "WHITE" | "RED";
+  probabilities: {
+    BLUE: number;
+    WHITE: number;
+    RED: number;
+  };
+  confidence: number;
+  constraints: {
+    can_be_red: boolean;
+    can_be_white: boolean;
+    is_in_red_period: boolean;
+  };
+}
+
+export interface TempoStateData {
+  success: boolean;
+  season?: string;
+  stock_red_remaining?: number;
+  stock_red_total?: number;
+  stock_white_remaining?: number;
+  stock_white_total?: number;
+  consecutive_red?: number;
+  error?: string;
+  message: string;
+}
+
+export interface TempoPredictionsData {
+  success: boolean;
+  predictions?: TempoPrediction[];
+  state?: {
+    season: string;
+    stock_red_remaining: number;
+    stock_red_total: number;
+    stock_white_remaining: number;
+    stock_white_total: number;
+  };
+  model_version?: string;
+  error?: string;
+  message: string;
+}
+
+// Calendar day data
+export interface TempoCalendarDay {
+  date: string;
+  color: "BLUE" | "WHITE" | "RED" | null;
+  is_actual: boolean;
+  is_prediction: boolean;
+  probabilities?: {
+    BLUE: number;
+    WHITE: number;
+    RED: number;
+  };
+  confidence?: number;
+  constraints?: {
+    can_be_red: boolean;
+    can_be_white: boolean;
+    is_in_red_period: boolean;
+  };
+}
+
+export interface TempoCalendarData {
+  success: boolean;
+  season?: string;
+  calendar?: TempoCalendarDay[];
+  statistics?: {
+    total_days: number;
+    color_counts: {
+      BLUE: number;
+      WHITE: number;
+      RED: number;
+    };
+    predictions_count: number;
+  };
+  stock?: {
+    red_remaining: number;
+    red_total: number;
+    white_remaining: number;
+    white_total: number;
+  };
+  error?: string;
+  message?: string;
+}
+
+export interface TempoHistoryData {
+  success: boolean;
+  season?: string;
+  history?: Array<{
+    date: string;
+    color: "BLUE" | "WHITE" | "RED";
+    is_actual: boolean;
+  }>;
+  count?: number;
+  error?: string;
+  message?: string;
+}
+
+export interface TempoCalibrationData {
+  success: boolean;
+  calibrated?: boolean;
+  params?: {
+    thermosensitivity: number;
+    base_consumption: number;
+    temp_reference: number;
+    calibration_date: string;
+    calibration_accuracy: number;
+    calibration_red_recall: number;
+  };
+  error?: string;
+  message?: string;
+}

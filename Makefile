@@ -86,9 +86,10 @@ docker-logs: ## Tail Docker logs
 # Hybrid Mode (recommended for Bluetooth)
 # =====================
 
-hybrid: backend-local docker-frontend-hybrid ## Start local backend + Docker frontend (for Bluetooth support)
+hybrid: backend-local tempo-start docker-frontend-hybrid ## Start local backend + Tempo + Docker frontend (for Bluetooth support)
 	@echo "$(GREEN)Hybrid mode started:$(RESET)"
 	@echo "  - Backend: localhost:$(API_PORT) (with Bluetooth)"
+	@echo "  - Tempo:   localhost:3034 (prediction server)"
 	@echo "  - Frontend: localhost:80 (Docker)"
 
 docker-frontend-hybrid: ## Start only the frontend in Docker (pointing to local backend)
@@ -103,13 +104,13 @@ docker-frontend: ## Start only the frontend in Docker
 # Utilities
 # =====================
 
-clean: backend-stop ## Stop everything and clean up
+clean: backend-stop tempo-stop ## Stop everything and clean up
 	@echo "$(GREEN)Stopping all Docker containers...$(RESET)"
 	@docker-compose down 2>/dev/null || true
 	@docker-compose -f docker-compose.hybrid.yml down 2>/dev/null || true
 	@docker-compose -f docker-compose.ssl.yml down 2>/dev/null || true
 	@docker-compose -f docker-compose.hybrid.ssl.yml down 2>/dev/null || true
-	@rm -f .backend.pid
+	@rm -f .backend.pid .tempo.pid
 	@echo "$(GREEN)Cleaned up$(RESET)"
 
 status: ## Show status of services
@@ -120,8 +121,45 @@ status: ## Show status of services
 		echo "Not running"; \
 	fi
 	@echo ""
+	@echo "$(GREEN)=== Tempo Prediction ===$(RESET)"
+	@if [ -f .tempo.pid ] && kill -0 $$(cat .tempo.pid) 2>/dev/null; then \
+		echo "Running (PID: $$(cat .tempo.pid))"; \
+	else \
+		echo "Not running"; \
+	fi
+	@echo ""
 	@echo "$(GREEN)=== Docker ===$(RESET)"
 	@docker-compose ps 2>/dev/null || echo "Docker not available"
+
+# =====================
+# Tempo Prediction Server
+# =====================
+
+tempo-start: ## Start Tempo prediction server (background)
+	@echo "$(GREEN)Starting Tempo prediction server...$(RESET)"
+	@if [ -f .tempo.pid ] && kill -0 $$(cat .tempo.pid) 2>/dev/null; then \
+		echo "$(YELLOW)Tempo server already running (PID: $$(cat .tempo.pid))$(RESET)"; \
+	else \
+		./scripts/start-tempo.sh && echo "Logs: tail -f logs/tempo.log"; \
+	fi
+
+tempo-stop: ## Stop the Tempo prediction server
+	@echo "$(GREEN)Stopping Tempo server...$(RESET)"
+	@if [ -f .tempo.pid ]; then \
+		PID=$$(cat .tempo.pid); \
+		if kill -0 $$PID 2>/dev/null; then \
+			kill $$PID 2>/dev/null || true; \
+			echo "Stopped PID $$PID"; \
+		fi; \
+		rm -f .tempo.pid; \
+	fi
+	@pkill -f "tempo_prediction.server" 2>/dev/null || true
+	@# Also kill any process on port 3034 as fallback
+	@lsof -ti:3034 2>/dev/null | xargs kill -9 2>/dev/null || true
+	@echo "$(GREEN)Tempo server stopped$(RESET)"
+
+tempo-logs: ## Tail Tempo server logs
+	@tail -f logs/tempo.log
 
 # =====================
 # PWA & SSL (for mobile app access)
@@ -159,9 +197,10 @@ ssl-down: ## Stop SSL containers
 ssl-logs: ## Tail SSL Docker logs
 	docker-compose -f docker-compose.ssl.yml logs -f
 
-hybrid-ssl: backend-local docker-frontend-hybrid-ssl ## Hybrid mode with SSL (Bluetooth + PWA)
+hybrid-ssl: backend-local tempo-start docker-frontend-hybrid-ssl ## Hybrid mode with SSL (Bluetooth + PWA + Tempo)
 	@echo "$(GREEN)Hybrid SSL mode started:$(RESET)"
 	@echo "  - Backend: localhost:$(API_PORT) (with Bluetooth)"
+	@echo "  - Tempo:   localhost:3034 (prediction server)"
 	@echo "  - Frontend: https://localhost (Docker with SSL)"
 
 docker-frontend-hybrid-ssl: ## Start frontend with SSL in Docker (hybrid mode)

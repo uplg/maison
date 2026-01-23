@@ -59,6 +59,43 @@ const RTE_WEBPAGE_URL =
 const TARIFS_API_URL =
   "https://tabular-api.data.gouv.fr/api/resources/0c3d1d36-c412-4620-8566-e5cbb4fa2b5a/data/?page_size=1&P_SOUSCRITE__exact=6&__id__sort=desc";
 
+// Python ML prediction server
+const PREDICTION_SERVER_URL =
+  process.env.TEMPO_PREDICTION_URL || "http://127.0.0.1:3034";
+
+// Types for prediction responses
+interface TempoPrediction {
+  date: string;
+  predicted_color: "BLUE" | "WHITE" | "RED";
+  probabilities: {
+    BLUE: number;
+    WHITE: number;
+    RED: number;
+  };
+  confidence: number;
+  constraints: {
+    can_be_red: boolean;
+    can_be_white: boolean;
+    is_in_red_period: boolean;
+  };
+}
+
+interface TempoPredictionResponse {
+  success: boolean;
+  predictions: TempoPrediction[];
+  model_version?: string;
+}
+
+interface TempoStateResponse {
+  success: boolean;
+  season: string;
+  stock_red_remaining: number;
+  stock_red_total: number;
+  stock_white_remaining: number;
+  stock_white_total: number;
+  consecutive_red: number;
+}
+
 /**
  * Get the current Tempo season (e.g., "2024-2025" for dates between Sept 2024 and Aug 2025)
  */
@@ -155,6 +192,68 @@ async function fetchTarifs(): Promise<TempoTarifs | null> {
     console.error("❌ Error fetching tarifs:", error);
     return tarifsCache; // Return cached data if available
   }
+}
+
+/**
+ * Fetch Tempo predictions from Python ML server
+ */
+async function fetchTempoPredictions(): Promise<{
+  predictions: TempoPrediction[];
+  state?: TempoStateResponse;
+  model_version?: string;
+}> {
+  try {
+    const response = await fetch(`${PREDICTION_SERVER_URL}/predict/week`, {
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Prediction server returned ${response.status}`);
+    }
+
+    const data = (await response.json()) as TempoPredictionResponse;
+
+    // Also fetch state
+    let state: TempoStateResponse | undefined;
+    try {
+      const stateResponse = await fetch(`${PREDICTION_SERVER_URL}/state`, {
+        headers: { Accept: "application/json" },
+      });
+      if (stateResponse.ok) {
+        state = (await stateResponse.json()) as TempoStateResponse;
+      }
+    } catch {
+      // State fetch failed, continue without it
+    }
+
+    return {
+      predictions: data.predictions,
+      state,
+      model_version: data.model_version,
+    };
+  } catch (error) {
+    console.error("❌ Error fetching predictions:", error);
+    throw error;
+  }
+}
+
+/**
+ * Fetch Tempo state from Python ML server
+ */
+async function fetchTempoState(): Promise<TempoStateResponse> {
+  const response = await fetch(`${PREDICTION_SERVER_URL}/state`, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Prediction server returned ${response.status}`);
+  }
+
+  return (await response.json()) as TempoStateResponse;
 }
 
 /**
@@ -409,6 +508,217 @@ export function createTempoRoutes() {
             error: t.Optional(t.String()),
             message: t.String(),
           }),
+        },
+      )
+
+      // 🔮 Get predictions for the next 7 days (from Python ML server)
+      .get(
+        "/predictions",
+        async ({ set }) => {
+          try {
+            const predictions = await fetchTempoPredictions();
+            return {
+              success: true,
+              ...predictions,
+              message: "Tempo predictions retrieved successfully",
+            };
+          } catch (error) {
+            console.error("❌ Tempo prediction error:", error);
+            set.status = 503;
+            return {
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to fetch predictions",
+              message: "Tempo prediction service unavailable",
+            };
+          }
+        },
+        {
+          response: t.Object({
+            success: t.Boolean(),
+            predictions: t.Optional(
+              t.Array(
+                t.Object({
+                  date: t.String(),
+                  predicted_color: t.Union([
+                    t.Literal("BLUE"),
+                    t.Literal("WHITE"),
+                    t.Literal("RED"),
+                  ]),
+                  probabilities: t.Object({
+                    BLUE: t.Number(),
+                    WHITE: t.Number(),
+                    RED: t.Number(),
+                  }),
+                  confidence: t.Number(),
+                  constraints: t.Object({
+                    can_be_red: t.Boolean(),
+                    can_be_white: t.Boolean(),
+                    is_in_red_period: t.Boolean(),
+                  }),
+                }),
+              ),
+            ),
+            state: t.Optional(
+              t.Object({
+                season: t.String(),
+                stock_red_remaining: t.Number(),
+                stock_red_total: t.Number(),
+                stock_white_remaining: t.Number(),
+                stock_white_total: t.Number(),
+              }),
+            ),
+            model_version: t.Optional(t.String()),
+            error: t.Optional(t.String()),
+            message: t.String(),
+          }),
+        },
+      )
+
+      // 📊 Get current Tempo state (stocks, season info)
+      .get(
+        "/state",
+        async ({ set }) => {
+          try {
+            const state = await fetchTempoState();
+            return {
+              success: true,
+              ...state,
+              message: "Tempo state retrieved successfully",
+            };
+          } catch (error) {
+            console.error("❌ Tempo state error:", error);
+            set.status = 503;
+            return {
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to fetch state",
+              message: "Tempo state service unavailable",
+            };
+          }
+        },
+        {
+          response: t.Object({
+            success: t.Boolean(),
+            season: t.Optional(t.String()),
+            stock_red_remaining: t.Optional(t.Number()),
+            stock_red_total: t.Optional(t.Number()),
+            stock_white_remaining: t.Optional(t.Number()),
+            stock_white_total: t.Optional(t.Number()),
+            consecutive_red: t.Optional(t.Number()),
+            error: t.Optional(t.String()),
+            message: t.String(),
+          }),
+        },
+      )
+
+      // 📅 Get calendar data with historical colors and predictions
+      .get(
+        "/calendar",
+        async ({ set, query }) => {
+          try {
+            const season = query.season || undefined;
+            const url = `${PREDICTION_SERVER_URL}/calendar${season ? `?season=${season}` : ""}`;
+            const response = await fetch(url, {
+              headers: { Accept: "application/json" },
+            });
+
+            if (!response.ok) {
+              throw new Error(`Calendar endpoint returned ${response.status}`);
+            }
+
+            return await response.json();
+          } catch (error) {
+            console.error("❌ Tempo calendar error:", error);
+            set.status = 503;
+            return {
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to fetch calendar",
+              message: "Tempo calendar service unavailable",
+            };
+          }
+        },
+        {
+          query: t.Object({
+            season: t.Optional(t.String()),
+          }),
+        },
+      )
+
+      // 📜 Get historical colors for a season
+      .get(
+        "/history",
+        async ({ set, query }) => {
+          try {
+            const season = query.season || undefined;
+            const url = `${PREDICTION_SERVER_URL}/history${season ? `?season=${season}` : ""}`;
+            const response = await fetch(url, {
+              headers: { Accept: "application/json" },
+            });
+
+            if (!response.ok) {
+              throw new Error(`History endpoint returned ${response.status}`);
+            }
+
+            return await response.json();
+          } catch (error) {
+            console.error("❌ Tempo history error:", error);
+            set.status = 503;
+            return {
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to fetch history",
+              message: "Tempo history service unavailable",
+            };
+          }
+        },
+        {
+          query: t.Object({
+            season: t.Optional(t.String()),
+          }),
+        },
+      )
+
+      // ⚙️ Get calibration info
+      .get(
+        "/calibration",
+        async ({ set }) => {
+          try {
+            const response = await fetch(
+              `${PREDICTION_SERVER_URL}/calibration`,
+              {
+                headers: { Accept: "application/json" },
+              },
+            );
+
+            if (!response.ok) {
+              throw new Error(
+                `Calibration endpoint returned ${response.status}`,
+              );
+            }
+
+            return await response.json();
+          } catch (error) {
+            console.error("❌ Tempo calibration error:", error);
+            set.status = 503;
+            return {
+              success: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to fetch calibration",
+              message: "Tempo calibration service unavailable",
+            };
+          }
         },
       )
   );
