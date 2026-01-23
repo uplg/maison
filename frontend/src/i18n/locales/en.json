@@ -277,6 +277,8 @@
     "unknown": "Unknown",
     "cached": "Cached data (API unavailable)",
     "currentTarif": "Today's rate",
+    "estimated": "estimated",
+    "predictionNotice": "Prediction (real data around 11AM)",
     "allTarifs": "View all rates",
     "offPeak": "Off-peak",
     "peak": "Peak",

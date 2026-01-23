@@ -23,6 +23,7 @@ from .constants import (
     CACHE_DIR,
     STOCK_RED_DAYS,
     STOCK_WHITE_DAYS,
+    TempoColor,
     can_be_red,
     can_be_white,
     get_tempo_day_number,
@@ -401,9 +402,6 @@ class HybridTempoPredictor:
                 tempo_day, state.stock_red, state.stock_white
             )
             
-            # Determine color
-            color, new_state = self.algorithm.determine_color(d, normalized, state)
-            
             # Calculate pseudo-probabilities based on distance to thresholds
             dist_to_red = normalized - threshold_red
             dist_to_white = normalized - threshold_white
@@ -423,6 +421,21 @@ class HybridTempoPredictor:
                 prob_white = 0.0
             
             prob_blue = 1.0 - prob_red - prob_white
+            
+            # Predicted color is the one with highest probability
+            probs = {"BLUE": prob_blue, "WHITE": prob_white, "RED": prob_red}
+            color = max(probs, key=lambda k: probs[k])
+            
+            # Update state based on predicted color
+            new_state = state.copy()
+            if color == "RED":
+                new_state.stock_red -= 1
+                new_state.consecutive_red += 1
+            else:
+                new_state.consecutive_red = 0
+                if color == "WHITE":
+                    new_state.stock_white -= 1
+            new_state.last_color = color
             
             # Build prediction object
             prediction = {

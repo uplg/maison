@@ -29,7 +29,7 @@ const colorStyles: Record<string, { bg: string; text: string; border: string; li
   },
 }
 
-function ColorBadge({ color, label }: { color: TempoColor; label: string }) {
+function ColorBadge({ color, label, isPrediction }: { color: TempoColor; label: string; isPrediction?: boolean }) {
   const { t } = useTranslation()
 
   if (!color) {
@@ -52,12 +52,13 @@ function ColorBadge({ color, label }: { color: TempoColor; label: string }) {
     <div className="flex flex-col items-center gap-1">
       <span className="text-xs text-muted-foreground">{label}</span>
       <div
-        className={`flex h-12 w-12 items-center justify-center rounded-full border-2 ${styles.bg} ${styles.text} ${styles.border} shadow-sm`}
+        className={`flex h-12 w-12 items-center justify-center rounded-full border-2 ${styles.bg} ${styles.text} ${styles.border} shadow-sm ${isPrediction ? 'border-dashed opacity-80' : ''}`}
       >
-        <Zap className="h-5 w-5" />
+        {isPrediction ? <TrendingUp className="h-5 w-5" /> : <Zap className="h-5 w-5" />}
       </div>
       <span className={`text-xs font-medium ${color === 'WHITE' ? 'text-gray-700' : ''}`}>
         {t(`tempo.colors.${color.toLowerCase()}`)}
+        {isPrediction && <span className="text-muted-foreground"> *</span>}
       </span>
     </div>
   )
@@ -103,6 +104,16 @@ export function TempoCard() {
     retry: 2,
   })
 
+  // Fetch predictions as fallback when official colors are not available
+  const { data: predictionsData } = useQuery({
+    queryKey: ['tempo-predictions'],
+    queryFn: tempoApi.getPredictions,
+    refetchInterval: 30 * 60 * 1000,
+    staleTime: 15 * 60 * 1000,
+    // Only fetch if we might need predictions
+    enabled: !!data?.success,
+  })
+
   if (isLoading) {
     return <TempoSkeleton />
   }
@@ -123,10 +134,28 @@ export function TempoCard() {
     return (price * 100).toFixed(2) // Convert €/kWh to c€/kWh
   }
 
+  // Get prediction for a specific date
+  const getPredictionForDate = (dateStr: string | undefined) => {
+    if (!dateStr || !predictionsData?.predictions) return null
+    const targetDate = dateStr.split('T')[0] // Normalize to YYYY-MM-DD
+    return predictionsData.predictions.find(p => p.date === targetDate)
+  }
+
+  // Determine colors to display (official or prediction fallback)
+  const todayColor = data.today?.color as TempoColor
+  const todayPrediction = !todayColor ? getPredictionForDate(data.today?.date) : null
+  const displayTodayColor = todayColor || (todayPrediction?.predicted_color as TempoColor)
+  const isTodayPrediction = !todayColor && !!todayPrediction
+
+  const tomorrowColor = data.tomorrow?.color as TempoColor
+  const tomorrowPrediction = !tomorrowColor ? getPredictionForDate(data.tomorrow?.date) : null
+  const displayTomorrowColor = tomorrowColor || (tomorrowPrediction?.predicted_color as TempoColor)
+  const isTomorrowPrediction = !tomorrowColor && !!tomorrowPrediction
+
   // Get current tariff based on today's color
   const getCurrentTarif = () => {
-    if (!data.tarifs || !data.today?.color) return null
-    const colorKey = data.today.color.toLowerCase() as 'blue' | 'white' | 'red'
+    if (!data.tarifs || !displayTodayColor) return null
+    const colorKey = displayTodayColor.toLowerCase() as 'blue' | 'white' | 'red'
     return data.tarifs[colorKey]
   }
 
@@ -150,22 +179,34 @@ export function TempoCard() {
         {/* Colors section */}
         <div className="flex items-center justify-center gap-6">
           <ColorBadge 
-            color={data.today?.color as TempoColor} 
-            label={`${t('tempo.today')} ${formatDate(data.today?.date)}`} 
+            color={displayTodayColor} 
+            label={`${t('tempo.today')} ${formatDate(data.today?.date)}`}
+            isPrediction={isTodayPrediction}
           />
           <ArrowRight className="h-4 w-4 text-muted-foreground" />
           <ColorBadge 
-            color={data.tomorrow?.color as TempoColor} 
-            label={`${t('tempo.tomorrow')} ${formatDate(data.tomorrow?.date)}`} 
+            color={displayTomorrowColor} 
+            label={`${t('tempo.tomorrow')} ${formatDate(data.tomorrow?.date)}`}
+            isPrediction={isTomorrowPrediction}
           />
         </div>
 
+        {/* Prediction notice */}
+        {(isTodayPrediction || isTomorrowPrediction) && (
+          <p className="text-center text-xs text-muted-foreground">
+            * {t('tempo.predictionNotice')}
+          </p>
+        )}
+
         {/* Current tariff section */}
-        {currentTarif && data.today?.color && (
-          <div className={`rounded-lg p-3 ${colorStyles[data.today.color]?.light || 'bg-gray-50'}`}>
+        {currentTarif && displayTodayColor && (
+          <div className={`rounded-lg p-3 ${colorStyles[displayTodayColor]?.light || 'bg-gray-50'}`}>
             <div className="flex items-center justify-center gap-2 mb-2">
               <Euro className="h-4 w-4" />
-              <span className="text-sm font-medium">{t('tempo.currentTarif')}</span>
+              <span className="text-sm font-medium">
+                {t('tempo.currentTarif')}
+                {isTodayPrediction && <span className="text-muted-foreground"> ({t('tempo.estimated')})</span>}
+              </span>
             </div>
             <div className="flex justify-center gap-6 text-sm">
               <div className="text-center">

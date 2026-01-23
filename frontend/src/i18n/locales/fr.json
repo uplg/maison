@@ -277,6 +277,8 @@
     "unknown": "Inconnu",
     "cached": "Données en cache (API indisponible)",
     "currentTarif": "Tarif du jour",
+    "estimated": "estimé",
+    "predictionNotice": "Prédiction (donnée réelle à 11h)",
     "allTarifs": "Voir tous les tarifs",
     "offPeak": "Heures creuses",
     "peak": "Heures pleines",
