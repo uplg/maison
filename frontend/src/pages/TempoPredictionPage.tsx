@@ -235,7 +235,7 @@ function StateCard({
 function LoadingSkeleton() {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {[1, 2, 3, 4, 5, 6, 7].map((i) => (
           <Card key={i}>
             <CardHeader>
@@ -346,7 +346,7 @@ export default function TempoPredictionPage() {
               <CloudSnow className="h-5 w-5" />
               {t("tempo.prediction.weekForecast")}
             </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {predictionsData.predictions?.map((prediction, index) => (
                 <PredictionCard
                   key={prediction.date}

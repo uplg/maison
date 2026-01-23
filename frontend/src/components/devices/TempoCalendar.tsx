@@ -382,25 +382,43 @@ export function TempoCalendar() {
     setViewYear(currentYear);
   };
 
-  // Get visible months (show 4 months in grid view)
+  // Get visible months - only show months that have data (history + 7 days predictions)
   const visibleMonths = useMemo(() => {
-    // Find the index of the current view month in season months
+    // For current season, only show up to current month + next month (predictions are only 7 days)
+    const isCurrentSeason = selectedSeason === defaultSeason;
+    
+    if (isCurrentSeason) {
+      // Show current month and next month only (predictions are max 7 days ahead)
+      const months: { year: number; month: number }[] = [];
+      months.push({ year: currentYear, month: currentMonth });
+      
+      // Add next month if we're within 7 days of month end
+      const daysInCurrentMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+      const currentDay = currentDate.getDate();
+      if (currentDay + 7 > daysInCurrentMonth) {
+        const nextMonth = currentMonth === 11 ? 0 : currentMonth + 1;
+        const nextYear = currentMonth === 11 ? currentYear + 1 : currentYear;
+        months.push({ year: nextYear, month: nextMonth });
+      }
+      
+      return months;
+    }
+    
+    // For past seasons, show all months in a 4-month grid
     const currentIndex = seasonMonths.findIndex(
       (m) => m.year === viewYear && m.month === viewMonth,
     );
 
     if (currentIndex === -1) {
-      // If not in season, show first 4 months
       return seasonMonths.slice(0, 4);
     }
 
-    // Show 4 months starting from a position that includes current month
     const startIndex = Math.max(
       0,
       Math.min(currentIndex, seasonMonths.length - 4),
     );
     return seasonMonths.slice(startIndex, startIndex + 4);
-  }, [seasonMonths, viewMonth, viewYear]);
+  }, [seasonMonths, viewMonth, viewYear, selectedSeason, defaultSeason, currentYear, currentMonth, currentDate]);
 
   const availableSeasons = getAvailableSeasons();
 
@@ -449,18 +467,20 @@ export function TempoCalendar() {
               </SelectContent>
             </Select>
 
-            {/* Navigation */}
-            <div className="flex items-center gap-1">
-              <Button variant="outline" size="icon" onClick={goToPrevMonth}>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="sm" onClick={goToToday}>
-                {t("tempo.today")}
-              </Button>
-              <Button variant="outline" size="icon" onClick={goToNextMonth}>
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
+            {/* Navigation - only show for past seasons */}
+            {selectedSeason !== defaultSeason && (
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" onClick={goToPrevMonth}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="sm" onClick={goToToday}>
+                  {t("tempo.today")}
+                </Button>
+                <Button variant="outline" size="icon" onClick={goToNextMonth}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -488,8 +508,14 @@ export function TempoCalendar() {
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {/* Calendar grid - 4 months */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Calendar grid - responsive based on number of months */}
+        <div className={`grid gap-4 ${
+          visibleMonths.length === 1 
+            ? "grid-cols-1 max-w-sm mx-auto" 
+            : visibleMonths.length === 2 
+              ? "grid-cols-1 sm:grid-cols-2 max-w-2xl mx-auto"
+              : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
+        }`}>
           {visibleMonths.map(({ year, month }) => (
             <MonthCalendar
               key={`${year}-${month}`}
