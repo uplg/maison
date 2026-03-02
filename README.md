@@ -192,15 +192,15 @@ Concept: A custom "home assistant" without the overhead.
 
 5. **Tempo Prediction** (optional)
 
-   To enable AI-powered Tempo predictions, set up the Python prediction server:
+   To enable AI-powered Tempo predictions, set up the Python prediction server with [pixi](https://pixi.sh):
 
    ```bash
    cd tempo-prediction
-   pip install -e .
-   tempo-train     # Train the model (first time only)
+   pixi install              # Install Python environment and dependencies
+   pixi run calibrate        # Calibrate the predictor (first time only)
    ```
 
-   The prediction server runs on port 3034 by default. The backend auto-connects to it.
+   The prediction server runs on port 3034 by default. Start it with `pixi run serve` or use `make tempo-start` from the project root. The backend auto-connects to it.
 
 6. **Environment Setup**
 

@@ -75,3 +75,6 @@ scripts/ssl/*
 *.pyc
 __pycache__
 tempo-prediction/cache
+tempo-prediction/.pixi/
+tempo-prediction/.venv/
+tempo-prediction/.ruff_cache/

@@ -16,10 +16,15 @@ lsof -ti:3034 2>/dev/null | xargs kill -9 2>/dev/null || true
 # Remove old PID file
 rm -f "$PID_FILE"
 
-# Start the server
+# Ensure pixi environment is set up
+if [ ! -d "$TEMPO_DIR/.pixi" ]; then
+    echo "Installing pixi environment..."
+    pixi install --manifest-path "$TEMPO_DIR/pyproject.toml"
+fi
+
+# Start the server via pixi
 cd "$TEMPO_DIR"
-source .venv/bin/activate
-nohup python -m tempo_prediction.server > "$LOG_FILE" 2>&1 &
+nohup pixi run serve > "$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"
 
 # Wait and verify

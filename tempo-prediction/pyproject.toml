@@ -16,12 +16,6 @@ dependencies = [
     "python-dateutil>=2.8.0",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-]
-
 [project.scripts]
 tempo-train = "tempo_prediction.train:main"
 tempo-backtest = "tempo_prediction.backtest:main"
@@ -33,3 +27,33 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tempo_prediction"]
+
+# ── Pixi configuration ──────────────────────────────────────────────
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64"]
+
+[tool.pixi.dependencies]
+python = ">=3.11"
+
+[tool.pixi.pypi-dependencies]
+tempo-prediction = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+serve = "python -m tempo_prediction.server"
+calibrate = "python -m tempo_prediction.train"
+calibrate-backtest = "python -m tempo_prediction.train --backtest"
+backtest = "python -m tempo_prediction.backtest"
+clean = "rm -rf models/*.safetensors models/*.json cache/*.json backtest_results.json"
+
+[tool.pixi.feature.test.dependencies]
+pytest = ">=7.4"
+pytest-cov = ">=4.1"
+
+[tool.pixi.feature.test.tasks]
+test = "pytest tests/ -v"
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+test = { features = ["test"], solve-group = "default" }

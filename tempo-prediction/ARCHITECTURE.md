@@ -273,22 +273,35 @@ tempo-prediction/
 ├── cache/
 │   ├── calibration_params.json  # Persisted calibration
 │   └── tempo_*.json            # Cached Tempo history
-├── models/
-│   └── (trained model files)
+├── pyproject.toml            # Project config + pixi tasks
+├── pixi.lock                 # Locked dependencies
+├── README.md                 # Usage instructions
 └── ARCHITECTURE.md           # This file
 ```
 
 ## Running the System
 
+All commands use [pixi](https://pixi.sh) from the `tempo-prediction/` directory. See [README.md](README.md) for setup instructions.
+
 ### Start Prediction Server
 
 ```bash
-cd tempo-prediction
-source .venv/bin/activate
-python -m tempo_prediction.server
+pixi run serve
 ```
 
-### Trigger Recalibration
+### Calibrate
+
+```bash
+pixi run calibrate
+```
+
+### Backtest
+
+```bash
+pixi run backtest
+```
+
+### Trigger Recalibration via API
 
 ```bash
 curl -X POST http://localhost:3034/calibrate
