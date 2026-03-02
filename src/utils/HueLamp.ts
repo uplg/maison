@@ -138,7 +138,7 @@ export function buildControlCommand(options: {
  */
 export function parseHueLampState(
   power: Buffer | null,
-  brightness: Buffer | null
+  brightness: Buffer | null,
 ): Partial<HueLampState> {
   const state: Partial<HueLampState> = {};
 
@@ -159,7 +159,7 @@ export function parseHueLampState(
 export function isHueLamp(
   localName?: string,
   manufacturerData?: Buffer,
-  serviceUuids?: string[]
+  serviceUuids?: string[],
 ): boolean {
   // Check by service UUIDs FIRST - most reliable method
   // Hue lamps advertise "fe0f" (Philips/Signify short UUID)

@@ -49,7 +49,7 @@ export function createDeviceRoutes(deviceManager: DeviceManager) {
         },
         {
           response: DevicesListResponseSchema,
-        }
+        },
       )
 
       // 📊 Connection Statistics
@@ -97,7 +97,7 @@ export function createDeviceRoutes(deviceManager: DeviceManager) {
         },
         {
           response: DeviceConnectionResponseSchema,
-        }
+        },
       )
 
       .post(
@@ -119,7 +119,7 @@ export function createDeviceRoutes(deviceManager: DeviceManager) {
         },
         {
           response: DeviceConnectionResponseSchema,
-        }
+        },
       )
 
       .get(
@@ -142,7 +142,7 @@ export function createDeviceRoutes(deviceManager: DeviceManager) {
         },
         {
           response: DeviceConnectionResponseSchema,
-        }
+        },
       )
 
       .get(
@@ -165,7 +165,7 @@ export function createDeviceRoutes(deviceManager: DeviceManager) {
         },
         {
           response: DeviceConnectionResponseSchema,
-        }
+        },
       )
 
       .get(
@@ -197,8 +197,8 @@ export function createDeviceRoutes(deviceManager: DeviceManager) {
                 device.type === "litter-box"
                   ? parseLitterBoxStatus(status)
                   : device.type === "feeder"
-                  ? parseFeederStatus(status)
-                  : null,
+                    ? parseFeederStatus(status)
+                    : null,
               raw_status: status.dps,
               message: "Device status retrieved successfully",
             };
@@ -212,7 +212,7 @@ export function createDeviceRoutes(deviceManager: DeviceManager) {
         },
         {
           response: DeviceStatusResponseSchema,
-        }
+        },
       )
 
       // Debug endpoint to scan DPS range for a specific device
@@ -237,13 +237,11 @@ export function createDeviceRoutes(deviceManager: DeviceManager) {
             await deviceManager.connectDevice(deviceId);
 
             console.log(
-              `🔍 Scanning DPS range ${startDps}-${endDps} (timeout: ${timeout}ms per DPS)...`
+              `🔍 Scanning DPS range ${startDps}-${endDps} (timeout: ${timeout}ms per DPS)...`,
             );
 
-            const dpsResults: Record<
-              number,
-              { value: unknown; type: string; length?: number }
-            > = {};
+            const dpsResults: Record<number, { value: unknown; type: string; length?: number }> =
+              {};
             const errors: Record<number, string> = {};
             let scannedCount = 0;
             let foundCount = 0;
@@ -251,34 +249,26 @@ export function createDeviceRoutes(deviceManager: DeviceManager) {
             for (let dps = startDps; dps <= endDps; dps++) {
               scannedCount++;
               try {
-                console.log(
-                  `🔍 Scanning DPS ${dps}... (${scannedCount}/${
-                    endDps - startDps + 1
-                  })`
-                );
+                console.log(`🔍 Scanning DPS ${dps}... (${scannedCount}/${endDps - startDps + 1})`);
 
                 // Add timeout to prevent hanging on non-existent DPS
                 const timeoutPromise = new Promise((_, reject) =>
-                  setTimeout(() => reject(new Error("Timeout")), timeout)
+                  setTimeout(() => reject(new Error("Timeout")), timeout),
                 );
 
-                const value = await Promise.race([
-                  device.api.get({ dps }),
-                  timeoutPromise,
-                ]);
+                const value = await Promise.race([device.api.get({ dps }), timeoutPromise]);
 
                 if (value !== undefined && value !== null) {
                   dpsResults[dps] = {
                     value: value,
                     type: typeof value,
-                    length:
-                      typeof value === "string" ? value.length : undefined,
+                    length: typeof value === "string" ? value.length : undefined,
                   };
                   foundCount++;
                   console.log(
                     `✅ DPS ${dps}:`,
                     JSON.stringify(value).substring(0, 100) +
-                      (JSON.stringify(value).length > 100 ? "..." : "")
+                      (JSON.stringify(value).length > 100 ? "..." : ""),
                   );
                 }
               } catch (e) {
@@ -313,7 +303,7 @@ export function createDeviceRoutes(deviceManager: DeviceManager) {
         {
           query: ScanDpsQuerySchema,
           response: DpsScanResponseSchema,
-        }
+        },
       )
   );
 }

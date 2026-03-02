@@ -10,7 +10,10 @@
     "dev:frontend": "cd frontend && bun run dev",
     "start": "bun src/index.ts",
     "build": "bun build src/index.ts --compile --outfile server",
-    "build:frontend": "cd frontend && bun run build"
+    "build:frontend": "cd frontend && bun run build",
+    "lint": "oxlint src/",
+    "format": "oxfmt --write src/",
+    "format:check": "oxfmt --check src/"
   },
   "keywords": [
     "tuya",
@@ -35,6 +38,8 @@
   "devDependencies": {
     "@types/node": "^22.19.13",
     "bun-types": "1.3.10",
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "oxlint": "^1.2.0",
+    "oxfmt": "^0.36.0"
   }
 }

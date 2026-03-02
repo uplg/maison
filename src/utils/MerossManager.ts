@@ -36,9 +36,7 @@ export class MerossManager {
       }
       const configData = fs.readFileSync(configPath, "utf8");
       this.configs = JSON.parse(configData);
-      console.log(
-        `[Meross] Loaded ${this.configs.length} device configurations`,
-      );
+      console.log(`[Meross] Loaded ${this.configs.length} device configurations`);
     } catch (error) {
       console.error("[Meross] Failed to load configuration:", error);
       this.configs = [];
@@ -88,12 +86,8 @@ export class MerossManager {
     // Start background polling for all devices
     this.startPolling();
 
-    const onlineCount = Array.from(this.devices.values()).filter(
-      (d) => d.isOnline,
-    ).length;
-    console.log(
-      `[Meross] Initialization complete: ${onlineCount}/${this.devices.size} online`,
-    );
+    const onlineCount = Array.from(this.devices.values()).filter((d) => d.isOnline).length;
+    console.log(`[Meross] Initialization complete: ${onlineCount}/${this.devices.size} online`);
   }
 
   /**

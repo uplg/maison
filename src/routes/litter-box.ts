@@ -56,8 +56,7 @@ export function createLitterBoxRoutes(deviceManager: DeviceManager) {
               raw_dps: status.dps,
             };
           } catch (error) {
-            const errorMessage =
-              error instanceof Error ? error.message : "Unknown error";
+            const errorMessage = error instanceof Error ? error.message : "Unknown error";
             const isTimeout = errorMessage.toLowerCase().includes("timeout");
 
             set.status = isTimeout ? 504 : 500;
@@ -71,7 +70,7 @@ export function createLitterBoxRoutes(deviceManager: DeviceManager) {
         },
         {
           response: LitterBoxStatusResponseSchema,
-        }
+        },
       )
 
       .post(
@@ -117,7 +116,7 @@ export function createLitterBoxRoutes(deviceManager: DeviceManager) {
         },
         {
           response: LitterBoxCleanResponseSchema,
-        }
+        },
       )
 
       .post(
@@ -247,7 +246,7 @@ export function createLitterBoxRoutes(deviceManager: DeviceManager) {
                 deviceId,
                 parseInt(dps),
                 value as string | number | boolean,
-                false
+                false,
               );
               console.log(`✅ Updated DPS ${dps} to:`, value);
             }
@@ -274,7 +273,7 @@ export function createLitterBoxRoutes(deviceManager: DeviceManager) {
         {
           body: LitterBoxSettingsSchema,
           response: LitterBoxSettingsResponseSchema,
-        }
+        },
       )
   );
 }

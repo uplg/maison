@@ -72,7 +72,7 @@ export function createFeederRoutes(deviceManager: DeviceManager) {
         {
           body: FeedRequestSchema,
           response: FeederFeedResponseSchema,
-        }
+        },
       )
 
       .get(
@@ -120,7 +120,7 @@ export function createFeederRoutes(deviceManager: DeviceManager) {
         },
         {
           response: FeederStatusResponseSchema,
-        }
+        },
       )
 
       .get(
@@ -158,9 +158,7 @@ export function createFeederRoutes(deviceManager: DeviceManager) {
               },
               decoded: mealPlan ? MealPlan.decode(mealPlan) : null,
               meal_plan: mealPlan ?? null,
-              message: mealPlan
-                ? "Current meal plan retrieved"
-                : "Meal plan not available yet.",
+              message: mealPlan ? "Current meal plan retrieved" : "Meal plan not available yet.",
             };
           } catch (error) {
             set.status = 500;
@@ -172,7 +170,7 @@ export function createFeederRoutes(deviceManager: DeviceManager) {
         },
         {
           response: MealPlanResponseSchema,
-        }
+        },
       )
 
       .post(
@@ -199,10 +197,7 @@ export function createFeederRoutes(deviceManager: DeviceManager) {
             }
 
             const requestBody = body as { meal_plan: MealPlanEntry[] };
-            if (
-              !requestBody.meal_plan ||
-              !Array.isArray(requestBody.meal_plan)
-            ) {
+            if (!requestBody.meal_plan || !Array.isArray(requestBody.meal_plan)) {
               set.status = 400;
               return {
                 success: false,
@@ -253,7 +248,7 @@ export function createFeederRoutes(deviceManager: DeviceManager) {
         {
           body: MealPlanSchema,
           response: MealPlanUpdateResponseSchema,
-        }
+        },
       )
   );
 }

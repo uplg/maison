@@ -267,8 +267,8 @@ tempo-prediction/
 │   ├── constants.py          # Thresholds, stocks, periods
 │   ├── data_collector.py     # API clients for data sources
 │   ├── hybrid_predictor.py   # Main predictor (calibrated RTE)
-│   ├── predictor.py          # XGBoost predictor (legacy)
-│   ├── mlx_predictor.py      # MLX LSTM predictor (experimental)
+│   ├── train.py              # Calibration CLI
+│   ├── backtest.py           # Backtesting CLI
 │   └── server.py             # HTTP API server
 ├── cache/
 │   ├── calibration_params.json  # Persisted calibration

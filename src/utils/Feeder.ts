@@ -35,9 +35,7 @@ export function parseFeederStatus(status: DPSObject) {
     if (history.parsed.timestamp) {
       const timestamp = parseInt(history.parsed.timestamp);
       if (!isNaN(timestamp)) {
-        const date = new Date(
-          timestamp > 1000000000000 ? timestamp : timestamp * 1000
-        );
+        const date = new Date(timestamp > 1000000000000 ? timestamp : timestamp * 1000);
         history.parsed.timestamp_readable = date.toISOString();
       }
     }

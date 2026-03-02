@@ -31,9 +31,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
           const allLamps = hueLampManager.getAllLamps();
 
           // Filter out lamps that require pairing (not owned/authorized)
-          const accessibleLamps = allLamps.filter(
-            (lamp) => !lamp.pairingRequired
-          );
+          const accessibleLamps = allLamps.filter((lamp) => !lamp.pairingRequired);
 
           const lamps = accessibleLamps.map((lamp) => ({
             id: lamp.config.id,
@@ -68,7 +66,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
         },
         {
           response: HueLampsListResponseSchema,
-        }
+        },
       )
 
       // 🔍 Trigger a BLE scan for lamps
@@ -176,7 +174,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
         },
         {
           response: HueLampStatusResponseSchema,
-        }
+        },
       )
 
       // 🔗 Connect specific lamp
@@ -259,10 +257,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
           }
 
           try {
-            const result = await hueLampManager.setPower(
-              params.lampId,
-              body.enabled
-            );
+            const result = await hueLampManager.setPower(params.lampId, body.enabled);
 
             if (!result) {
               set.status = 500;
@@ -291,7 +286,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
         {
           body: HueLampPowerSchema,
           response: HueLampResponseSchema,
-        }
+        },
       )
 
       // 🔆 Set lamp brightness
@@ -317,10 +312,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
           }
 
           try {
-            const result = await hueLampManager.setBrightness(
-              params.lampId,
-              body.brightness
-            );
+            const result = await hueLampManager.setBrightness(params.lampId, body.brightness);
 
             if (!result) {
               set.status = 500;
@@ -349,7 +341,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
         {
           body: HueLampBrightnessSchema,
           response: HueLampResponseSchema,
-        }
+        },
       )
 
       // �️ Set lamp color temperature
@@ -375,17 +367,13 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
           }
 
           try {
-            const result = await hueLampManager.setTemperature(
-              params.lampId,
-              body.temperature
-            );
+            const result = await hueLampManager.setTemperature(params.lampId, body.temperature);
 
             if (!result) {
               set.status = 500;
               return {
                 success: false,
-                error:
-                  "Failed to set temperature (lamp may not support color temperature)",
+                error: "Failed to set temperature (lamp may not support color temperature)",
               };
             }
 
@@ -409,7 +397,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
         {
           body: HueLampTemperatureSchema,
           response: HueLampResponseSchema,
-        }
+        },
       )
 
       // �🎚️ Set lamp state (power + brightness together)
@@ -438,7 +426,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
             const result = await hueLampManager.setLampState(
               params.lampId,
               body.isOn,
-              body.brightness
+              body.brightness,
             );
 
             if (!result) {
@@ -453,8 +441,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
               success: true,
               state: {
                 isOn: body.isOn,
-                brightness:
-                  body.brightness ?? parseBrightness(lamp.state.brightness),
+                brightness: body.brightness ?? parseBrightness(lamp.state.brightness),
               },
               message: "Lamp state updated",
             };
@@ -469,7 +456,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
         {
           body: HueLampStateSchema,
           response: HueLampResponseSchema,
-        }
+        },
       )
 
       // ✏️ Rename a lamp
@@ -487,10 +474,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
           }
 
           try {
-            const result = await hueLampManager.renameLamp(
-              params.lampId,
-              body.name
-            );
+            const result = await hueLampManager.renameLamp(params.lampId, body.name);
 
             if (!result) {
               set.status = 500;
@@ -514,7 +498,7 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
         },
         {
           body: HueLampRenameSchema,
-        }
+        },
       )
 
       // 🚫 Blacklist a lamp (remove and prevent re-discovery)
@@ -554,32 +538,29 @@ export function createHueLampRoutes(getHueLampManager: () => IHueLampManager) {
       })
 
       // ✅ Remove address from blacklist
-      .delete(
-        "/blacklist/:address",
-        async ({ params, set, hueLampManager }) => {
-          try {
-            const result = hueLampManager.unblacklistAddress(params.address);
+      .delete("/blacklist/:address", async ({ params, set, hueLampManager }) => {
+        try {
+          const result = hueLampManager.unblacklistAddress(params.address);
 
-            if (!result) {
-              set.status = 404;
-              return {
-                success: false,
-                error: "Address not found in blacklist",
-              };
-            }
-
-            return {
-              success: true,
-              message: "Address removed from blacklist",
-            };
-          } catch (error) {
-            set.status = 500;
+          if (!result) {
+            set.status = 404;
             return {
               success: false,
-              error: error instanceof Error ? error.message : "Unknown error",
+              error: "Address not found in blacklist",
             };
           }
+
+          return {
+            success: true,
+            message: "Address removed from blacklist",
+          };
+        } catch (error) {
+          set.status = 500;
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
+          };
         }
-      )
+      })
   );
 }

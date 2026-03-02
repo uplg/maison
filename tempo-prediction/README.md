@@ -4,10 +4,7 @@ AI-powered prediction of French EDF Tempo electricity pricing colors (Blue, Whit
 
 ## Overview
 
-This module implements:
-1. **RTE Algorithm Baseline**: The official algorithm used by RTE to determine Tempo colors
-2. **ML Prediction**: XGBoost model trained on historical data for 7-day forecasts
-3. **Backtesting**: Historical validation of prediction accuracy
+This module implements a **Hybrid predictor** that combines the official RTE algorithm with calibrated temperature-to-consumption estimation to forecast Tempo colors up to 7 days ahead.
 
 ## Algorithm
 
@@ -19,8 +16,8 @@ The Tempo color selection is based on:
   - Remaining stock of red/white days
 
 ### Thresholds
-- `Threshold_Red = 3.15 - 0.010 × day - 0.031 × stock_red`
-- `Threshold_White+Red = 4.00 - 0.015 × day - 0.026 × (stock_red + stock_white)`
+- `Threshold_Red = 3.15 - 0.010 x day - 0.031 x stock_red`
+- `Threshold_White+Red = 4.00 - 0.015 x day - 0.026 x (stock_red + stock_white)`
 
 ### Constraints
 - 22 red days per year (Nov 1 - Mar 31, no weekends, max 5 consecutive)
@@ -29,7 +26,7 @@ The Tempo color selection is based on:
 ## Data Sources
 
 - **Tempo history**: RTE public API
-- **Consumption/Production**: RTE éCO2mix API
+- **Consumption/Production**: RTE eco2mix API
 - **Weather forecasts**: Open-Meteo API (free, 7-day forecast)
 
 ## Installation
@@ -41,19 +38,19 @@ pip install -e .
 
 ## Usage
 
-### Train the model
+### Calibrate the predictor
 ```bash
-tempo-train
+tempo-train --backtest
 ```
 
-### Run predictions
+### Run backtest
 ```bash
-tempo-predict
+tempo-backtest --season 2024-2025
 ```
 
-### Backtest
+### Start the prediction server
 ```bash
-tempo-backtest
+tempo-serve
 ```
 
 ## API

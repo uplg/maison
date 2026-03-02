@@ -80,12 +80,7 @@ export class MealPlan {
 
         const [timeHour, timeMinute] = meal.time.split(":").map(Number);
 
-        if (
-          timeHour < 0 ||
-          timeHour > 23 ||
-          timeMinute < 0 ||
-          timeMinute > 59
-        ) {
+        if (timeHour < 0 || timeHour > 23 || timeMinute < 0 || timeMinute > 59) {
           throw new Error(`Invalid time: ${meal.time}`);
         }
 
@@ -95,13 +90,7 @@ export class MealPlan {
 
         const statusByte = meal.status === "Enabled" ? 1 : 0;
 
-        encodedBytes.push(
-          daysOfWeekBits,
-          timeHour,
-          timeMinute,
-          meal.portion,
-          statusByte
-        );
+        encodedBytes.push(daysOfWeekBits, timeHour, timeMinute, meal.portion, statusByte);
       }
 
       const buffer = Buffer.from(encodedBytes);
@@ -128,11 +117,7 @@ export class MealPlan {
       return false;
     }
 
-    if (
-      typeof entry.portion !== "number" ||
-      entry.portion < 0 ||
-      entry.portion > 12
-    ) {
+    if (typeof entry.portion !== "number" || entry.portion < 0 || entry.portion > 12) {
       return false;
     }
 
@@ -147,9 +132,7 @@ export class MealPlan {
     return mealPlan
       .map((meal, index) => {
         const days = meal.days_of_week.join(", ");
-        return `${index + 1}. ${days} à ${meal.time} - ${
-          meal.portion
-        } serving(s) - ${meal.status}`;
+        return `${index + 1}. ${days} à ${meal.time} - ${meal.portion} serving(s) - ${meal.status}`;
       })
       .join("\n");
   }

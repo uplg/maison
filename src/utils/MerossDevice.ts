@@ -180,9 +180,7 @@ export class MerossDevice {
       // Check for protocol-level errors
       if (result.header.method === "ERROR") {
         const error = (result.payload as { error?: { code: number; detail: string } }).error;
-        throw new Error(
-          `Meross error ${error?.code}: ${error?.detail}`,
-        );
+        throw new Error(`Meross error ${error?.code}: ${error?.detail}`);
       }
 
       return result;

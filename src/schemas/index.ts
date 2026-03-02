@@ -8,7 +8,7 @@ export const FeedRequestSchema = t.Object({
       maximum: 10,
       description: "Number of portions to feed (1-10)",
       default: 1,
-    })
+    }),
   ),
 });
 
@@ -17,15 +17,7 @@ export const MealPlanSchema = t.Object({
     t.Object({
       days_of_week: t.Array(t.String(), {
         description: "Days of the week for this meal",
-        default: [
-          "Monday",
-          "Tuesday",
-          "Wednesday",
-          "Thursday",
-          "Friday",
-          "Saturday",
-          "Sunday",
-        ],
+        default: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
       }),
       time: t.String({
         pattern: "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$",
@@ -43,7 +35,7 @@ export const MealPlanSchema = t.Object({
         default: "Enabled",
       }),
     }),
-    { description: "Array of scheduled meals" }
+    { description: "Array of scheduled meals" },
   ),
 });
 
@@ -55,63 +47,59 @@ export const LitterBoxSettingsSchema = t.Object({
       maximum: 1800,
       description: "Delay in seconds before cleaning (60-1800)",
       default: 120,
-    })
+    }),
   ),
   sleep_mode: t.Optional(
     t.Object({
-      enabled: t.Optional(
-        t.Boolean({ description: "Enable/disable sleep mode", default: false })
-      ),
+      enabled: t.Optional(t.Boolean({ description: "Enable/disable sleep mode", default: false })),
       start_time: t.Optional(
         t.String({
           pattern: "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$",
           description: "Start time in HH:MM format",
           default: "23:00",
-        })
+        }),
       ),
       end_time: t.Optional(
         t.String({
           pattern: "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$",
           description: "End time in HH:MM format",
           default: "07:00",
-        })
+        }),
       ),
-    })
+    }),
   ),
   preferences: t.Optional(
     t.Object({
       child_lock: t.Optional(
-        t.Boolean({ description: "Enable/disable child lock", default: false })
+        t.Boolean({ description: "Enable/disable child lock", default: false }),
       ),
       kitten_mode: t.Optional(
-        t.Boolean({ description: "Enable/disable kitten mode", default: false })
+        t.Boolean({ description: "Enable/disable kitten mode", default: false }),
       ),
-      lighting: t.Optional(
-        t.Boolean({ description: "Enable/disable lighting", default: true })
-      ),
+      lighting: t.Optional(t.Boolean({ description: "Enable/disable lighting", default: true })),
       prompt_sound: t.Optional(
         t.Boolean({
           description: "Enable/disable prompt sounds",
           default: true,
-        })
+        }),
       ),
       automatic_homing: t.Optional(
         t.Boolean({
           description: "Enable/disable automatic homing",
           default: true,
-        })
+        }),
       ),
-    })
+    }),
   ),
   actions: t.Optional(
     t.Object({
       reset_sand_level: t.Optional(
-        t.Boolean({ description: "Reset sand level indicator", default: false })
+        t.Boolean({ description: "Reset sand level indicator", default: false }),
       ),
       reset_factory_settings: t.Optional(
-        t.Boolean({ description: "Reset to factory settings", default: false })
+        t.Boolean({ description: "Reset to factory settings", default: false }),
       ),
-    })
+    }),
   ),
 });
 
@@ -122,11 +110,9 @@ export const BaseResponseSchema = t.Object(
   {
     success: t.Boolean({ description: "Whether the operation was successful" }),
     message: t.Optional(t.String({ description: "Response message" })),
-    error: t.Optional(
-      t.String({ description: "Error message if operation failed" })
-    ),
+    error: t.Optional(t.String({ description: "Error message if operation failed" })),
   },
-  { additionalProperties: true }
+  { additionalProperties: true },
 );
 
 export const DeviceInfoSchema = t.Object({
@@ -134,14 +120,9 @@ export const DeviceInfoSchema = t.Object({
   name: t.String({ description: "Device name" }),
   type: t.Optional(
     t.Union(
-      [
-        t.Literal("feeder"),
-        t.Literal("litter-box"),
-        t.Literal("fountain"),
-        t.Literal("unknown"),
-      ],
-      { description: "Device type" }
-    )
+      [t.Literal("feeder"), t.Literal("litter-box"), t.Literal("fountain"), t.Literal("unknown")],
+      { description: "Device type" },
+    ),
   ),
   product_name: t.Optional(t.String({ description: "Product name" })),
   model: t.Optional(t.String({ description: "Device model" })),
@@ -156,9 +137,7 @@ export const DeviceInfoSchema = t.Object({
 export const DevicesListResponseSchema = t.Intersect([
   BaseResponseSchema,
   t.Object({
-    devices: t.Optional(
-      t.Array(DeviceInfoSchema, { description: "List of devices" })
-    ),
+    devices: t.Optional(t.Array(DeviceInfoSchema, { description: "List of devices" })),
     total: t.Optional(t.Number({ description: "Total number of devices" })),
   }),
 ]);
@@ -179,10 +158,10 @@ export const DeviceStatusResponseSchema = t.Intersect([
             t.Literal("fountain"),
             t.Literal("unknown"),
           ],
-          { description: "Device type" }
+          { description: "Device type" },
         ),
         connected: t.Boolean({ description: "Connection status" }),
-      })
+      }),
     ),
     parsed_status: t.Optional(t.Any({ description: "Parsed device status" })),
     raw_dps: t.Optional(t.Any({ description: "Raw device DPS data" })),
@@ -197,7 +176,7 @@ export const FeederFeedResponseSchema = t.Intersect([
       t.Object({
         id: t.String({ description: "Device ID" }),
         name: t.String({ description: "Device name" }),
-      })
+      }),
     ),
   }),
 ]);
@@ -209,7 +188,7 @@ export const FeederStatusResponseSchema = t.Intersect([
       t.Object({
         id: t.String({ description: "Device ID" }),
         name: t.String({ description: "Device name" }),
-      })
+      }),
     ),
     parsed_status: t.Optional(
       t.Object({
@@ -235,7 +214,7 @@ export const FeederStatusResponseSchema = t.Intersect([
           ip_address: t.Any({ description: "Device IP address" }),
         }),
         history: t.Any({ description: "Feed history data" }),
-      })
+      }),
     ),
     raw_dps: t.Optional(t.Any({ description: "Raw DPS data" })),
   }),
@@ -248,7 +227,7 @@ export const MealPlanResponseSchema = t.Intersect([
       t.Object({
         id: t.String({ description: "Device ID" }),
         name: t.String({ description: "Device name" }),
-      })
+      }),
     ),
     decoded: t.Optional(
       t.Union([
@@ -259,14 +238,12 @@ export const MealPlanResponseSchema = t.Intersect([
             portion: t.Number(),
             status: t.String(),
           }),
-          { description: "Decoded meal plan" }
+          { description: "Decoded meal plan" },
         ),
         t.Null(),
-      ])
+      ]),
     ),
-    meal_plan: t.Optional(
-      t.Union([t.String({ description: "Encoded meal plan" }), t.Null()])
-    ),
+    meal_plan: t.Optional(t.Union([t.String({ description: "Encoded meal plan" }), t.Null()])),
   }),
 ]);
 
@@ -277,14 +254,10 @@ export const MealPlanUpdateResponseSchema = t.Intersect([
       t.Object({
         id: t.String({ description: "Device ID" }),
         name: t.String({ description: "Device name" }),
-      })
+      }),
     ),
-    encoded_base64: t.Optional(
-      t.String({ description: "Encoded meal plan in Base64" })
-    ),
-    formatted_meal_plan: t.Optional(
-      t.String({ description: "Formatted meal plan description" })
-    ),
+    encoded_base64: t.Optional(t.String({ description: "Encoded meal plan in Base64" })),
+    formatted_meal_plan: t.Optional(t.String({ description: "Formatted meal plan description" })),
   }),
 ]);
 
@@ -296,7 +269,7 @@ export const LitterBoxStatusResponseSchema = t.Intersect([
       t.Object({
         id: t.String({ description: "Device ID" }),
         name: t.String({ description: "Device name" }),
-      })
+      }),
     ),
     parsed_status: t.Optional(
       t.Object({
@@ -345,7 +318,7 @@ export const LitterBoxStatusResponseSchema = t.Intersect([
             description: "Automatic homing enabled status",
           }),
         }),
-      })
+      }),
     ),
     raw_dps: t.Optional(t.Any({ description: "Raw DPS data" })),
   }),
@@ -358,7 +331,7 @@ export const LitterBoxCleanResponseSchema = t.Intersect([
       t.Object({
         id: t.String({ description: "Device ID" }),
         name: t.String({ description: "Device name" }),
-      })
+      }),
     ),
   }),
 ]);
@@ -370,11 +343,9 @@ export const LitterBoxSettingsResponseSchema = t.Intersect([
       t.Object({
         id: t.String({ description: "Device ID" }),
         name: t.String({ description: "Device name" }),
-      })
+      }),
     ),
-    updated_settings: t.Optional(
-      t.Number({ description: "Number of settings updated" })
-    ),
+    updated_settings: t.Optional(t.Number({ description: "Number of settings updated" })),
   }),
 ]);
 
@@ -383,31 +354,21 @@ export const DpsScanResponseSchema = t.Intersect([
   BaseResponseSchema,
   t.Object({
     scan_range: t.Optional(t.String({ description: "DPS scan range" })),
-    scanned_count: t.Optional(
-      t.Number({ description: "Number of DPS scanned" })
-    ),
-    found_count: t.Optional(
-      t.Number({ description: "Number of active DPS found" })
-    ),
+    scanned_count: t.Optional(t.Number({ description: "Number of DPS scanned" })),
+    found_count: t.Optional(t.Number({ description: "Number of active DPS found" })),
     available_dps: t.Optional(
       t.Record(
         t.String(),
         t.Object({
           value: t.Any({ description: "DPS value" }),
           type: t.String({ description: "Value type" }),
-          length: t.Optional(
-            t.Number({ description: "String length if applicable" })
-          ),
+          length: t.Optional(t.Number({ description: "String length if applicable" })),
         }),
-        { description: "Available DPS data points" }
-      )
+        { description: "Available DPS data points" },
+      ),
     ),
-    errors_count: t.Optional(
-      t.Number({ description: "Number of errors encountered" })
-    ),
-    errors: t.Optional(
-      t.Record(t.String(), t.String(), { description: "Error details" })
-    ),
+    errors_count: t.Optional(t.Number({ description: "Number of errors encountered" })),
+    errors: t.Optional(t.Record(t.String(), t.String(), { description: "Error details" })),
   }),
 ]);
 
@@ -426,19 +387,19 @@ export const ScanDpsQuerySchema = t.Object({
     t.String({
       pattern: "^[0-9]+$",
       description: "Starting DPS number (default: 1)",
-    })
+    }),
   ),
   end: t.Optional(
     t.String({
       pattern: "^[0-9]+$",
       description: "Ending DPS number (default: 255)",
-    })
+    }),
   ),
   timeout: t.Optional(
     t.String({
       pattern: "^[0-9]+$",
       description: "Timeout in milliseconds per DPS (default: 3000)",
-    })
+    }),
   ),
 });
 
@@ -449,7 +410,7 @@ export const FountainStatusResponseSchema = t.Object({
     t.Object({
       id: t.String(),
       name: t.String(),
-    })
+    }),
   ),
   parsed_status: t.Optional(t.Any()),
   message: t.Optional(t.String()),
@@ -464,7 +425,7 @@ export const FountainResetResponseSchema = t.Object({
     t.Object({
       id: t.String(),
       name: t.String(),
-    })
+    }),
   ),
   error: t.Optional(t.String()),
 });
@@ -474,7 +435,7 @@ export const FountainUVSettingsSchema = t.Object({
     t.Boolean({
       description: "Enable or disable UV light",
       default: true,
-    })
+    }),
   ),
   runtime: t.Optional(
     t.Number({
@@ -482,7 +443,7 @@ export const FountainUVSettingsSchema = t.Object({
       maximum: 24,
       description: "UV runtime in hours (0-24)",
       default: 0,
-    })
+    }),
   ),
 });
 
@@ -493,13 +454,13 @@ export const FountainUVSettingsResponseSchema = t.Object({
     t.Object({
       id: t.String(),
       name: t.String(),
-    })
+    }),
   ),
   applied_settings: t.Optional(
     t.Object({
       enabled: t.Optional(t.Boolean()),
       runtime: t.Optional(t.Number()),
-    })
+    }),
   ),
   error: t.Optional(t.String()),
 });
@@ -520,7 +481,7 @@ export const FountainEcoModeResponseSchema = t.Object({
     t.Object({
       id: t.String(),
       name: t.String(),
-    })
+    }),
   ),
   eco_mode: t.Optional(t.Number()),
   error: t.Optional(t.String()),
@@ -540,7 +501,7 @@ export const FountainPowerResponseSchema = t.Object({
     t.Object({
       id: t.String(),
       name: t.String(),
-    })
+    }),
   ),
   power: t.Optional(t.Boolean()),
   error: t.Optional(t.String()),
@@ -557,7 +518,7 @@ export const HueLampStateSchema = t.Object({
       minimum: 1,
       maximum: 100,
       description: "Brightness percentage (1-100)",
-    })
+    }),
   ),
 });
 
@@ -606,15 +567,9 @@ const HueLampInfoSchema = t.Object({
   state: t.Object({
     isOn: t.Boolean({ description: "Power state" }),
     brightness: t.Number({ description: "Brightness percentage (1-100)" }),
-    temperature: t.Nullable(
-      t.Number({ description: "Color temperature percentage" })
-    ),
-    temperatureMin: t.Nullable(
-      t.Number({ description: "Minimum temperature the lamp supports" })
-    ),
-    temperatureMax: t.Nullable(
-      t.Number({ description: "Maximum temperature the lamp supports" })
-    ),
+    temperature: t.Nullable(t.Number({ description: "Color temperature percentage" })),
+    temperatureMin: t.Nullable(t.Number({ description: "Minimum temperature the lamp supports" })),
+    temperatureMax: t.Nullable(t.Number({ description: "Maximum temperature the lamp supports" })),
   }),
   lastSeen: t.Nullable(t.String({ description: "Last seen timestamp" })),
 });
@@ -641,7 +596,7 @@ export const HueLampResponseSchema = t.Object({
     t.Object({
       isOn: t.Boolean(),
       brightness: t.Number(),
-    })
+    }),
   ),
   message: t.Optional(t.String()),
   error: t.Optional(t.String()),

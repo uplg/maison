@@ -56,18 +56,11 @@ export interface IHueLampManager {
   disconnectAllLamps(): Promise<void>;
   connectLamp(id: string): Promise<boolean>;
   disconnectLamp(id: string): Promise<void>;
-  refreshLampState(
-    id: string,
-    skipConnectionCheck?: boolean
-  ): Promise<HueLampState | null | void>;
+  refreshLampState(id: string, skipConnectionCheck?: boolean): Promise<HueLampState | null | void>;
   setPower(id: string, on: boolean): Promise<boolean>;
   setBrightness(id: string, brightness: number): Promise<boolean>;
   setTemperature(id: string, temperature: number): Promise<boolean>;
-  setLampState(
-    id: string,
-    isOn: boolean,
-    brightness?: number
-  ): Promise<boolean>;
+  setLampState(id: string, isOn: boolean, brightness?: number): Promise<boolean>;
   renameLamp(id: string, name: string): Promise<boolean>;
   getBlacklist(): string[];
   blacklistLamp(id: string): boolean;

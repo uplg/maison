@@ -121,9 +121,7 @@ export class HueLampManager {
         const data = fs.readFileSync(this.blacklistPath, "utf8");
         const addresses: string[] = JSON.parse(data);
         this.blacklistedAddresses = new Set(addresses);
-        console.log(
-          `🚫 Loaded ${this.blacklistedAddresses.size} blacklisted lamp addresses`
-        );
+        console.log(`🚫 Loaded ${this.blacklistedAddresses.size} blacklisted lamp addresses`);
       }
     } catch (error) {
       console.error("❌ Failed to load blacklist:", error);
@@ -292,10 +290,7 @@ export class HueLampManager {
     }
 
     // Check if this address is blacklisted (unauthorized lamp)
-    if (
-      this.blacklistedAddresses.has(address) ||
-      this.blacklistedAddresses.has(peripheral.id)
-    ) {
+    if (this.blacklistedAddresses.has(address) || this.blacklistedAddresses.has(peripheral.id)) {
       // Silently ignore blacklisted lamps
       return;
     }
@@ -303,7 +298,7 @@ export class HueLampManager {
     console.log(
       `💡 Discovered Hue lamp: ${
         localName || "Unknown"
-      } (${address}) [services: ${serviceUuids.length}]`
+      } (${address}) [services: ${serviceUuids.length}]`,
     );
 
     // Store discovered peripheral
@@ -311,7 +306,7 @@ export class HueLampManager {
 
     // Check if we have a config for this lamp
     const existingConfig = this.configs.find(
-      (c) => c.address === address || c.id === peripheral.id
+      (c) => c.address === address || c.id === peripheral.id,
     );
 
     if (existingConfig) {
@@ -324,9 +319,7 @@ export class HueLampManager {
         // Check if peripheral is already connected (state can get out of sync)
         if (peripheral.state === "connected") {
           if (!lamp.isConnected) {
-            console.log(
-              `🔄 ${lamp.config.name} peripheral is connected, syncing state...`
-            );
+            console.log(`🔄 ${lamp.config.name} peripheral is connected, syncing state...`);
             lamp.isConnected = true;
             lamp.isConnecting = false;
             lamp.state.reachable = true;
@@ -456,7 +449,7 @@ export class HueLampManager {
       // advertise their service UUIDs. We'll filter in handleDiscoveredPeripheral
       await noble.startScanningAsync(
         [], // No filter - scan all devices
-        true // Allow duplicates to detect devices coming back in range
+        true, // Allow duplicates to detect devices coming back in range
       );
 
       // Stop after duration
@@ -531,9 +524,7 @@ export class HueLampManager {
     }
 
     if (!peripheral) {
-      console.log(
-        `💡 Lamp ${lamp.config.name} not in range, waiting for scan...`
-      );
+      console.log(`💡 Lamp ${lamp.config.name} not in range, waiting for scan...`);
       lamp.state.reachable = false;
       return false;
     }
@@ -541,9 +532,7 @@ export class HueLampManager {
     // Check if peripheral is already connected at BLE level
     // This can happen if our state got out of sync
     if (peripheral.state === "connected") {
-      console.log(
-        `💡 ${lamp.config.name} peripheral already connected, syncing state...`
-      );
+      console.log(`💡 ${lamp.config.name} peripheral already connected, syncing state...`);
       lamp.peripheral = peripheral;
       lamp.isConnected = true;
       lamp.isConnecting = false;
@@ -563,17 +552,12 @@ export class HueLampManager {
       // Always rediscover characteristics when syncing state
       // Previous characteristics may be stale after a BLE reconnection
       try {
-        console.log(
-          `🔄 ${lamp.config.name} syncing - rediscovering characteristics...`
-        );
+        console.log(`🔄 ${lamp.config.name} syncing - rediscovering characteristics...`);
         await this.discoverCharacteristics(lampId);
         await this.subscribeToNotifications(lampId);
         await this.refreshLampState(lampId, true);
       } catch (error) {
-        console.error(
-          `⚠️ Failed to rediscover characteristics for ${lamp.config.name}:`,
-          error
-        );
+        console.error(`⚠️ Failed to rediscover characteristics for ${lamp.config.name}:`, error);
         // If we can't get characteristics, mark as not really connected
         lamp.isConnected = false;
         lamp.state.reachable = false;
@@ -609,8 +593,8 @@ export class HueLampManager {
         new Promise((_, reject) =>
           setTimeout(
             () => reject(new Error("Connection timeout")),
-            HUE_CONFIG.CONNECTION_TIMEOUT_MS
-          )
+            HUE_CONFIG.CONNECTION_TIMEOUT_MS,
+          ),
         ),
       ]);
 
@@ -647,12 +631,8 @@ export class HueLampManager {
 
       return true;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      console.error(
-        `❌ Failed to connect to ${lamp.config.name}:`,
-        errorMessage
-      );
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`❌ Failed to connect to ${lamp.config.name}:`, errorMessage);
       lamp.isConnected = false;
       lamp.isConnecting = false;
       lamp.state.reachable = false;
@@ -669,9 +649,7 @@ export class HueLampManager {
       const isTimeoutError = errorMessage.toLowerCase().includes("timeout");
 
       if (isAuthError) {
-        console.log(
-          `🔒 Lamp ${lamp.config.name} requires pairing (not authorized)`
-        );
+        console.log(`🔒 Lamp ${lamp.config.name} requires pairing (not authorized)`);
         lamp.pairingRequired = true;
 
         this.scheduleReconnect(lampId);
@@ -680,13 +658,9 @@ export class HueLampManager {
       }
 
       // Timeout errors: only blacklist NEW lamps (never connected before)
-      if (
-        isTimeoutError &&
-        lamp.connectionFailures >= 3 &&
-        !lamp.config.hasConnectedOnce
-      ) {
+      if (isTimeoutError && lamp.connectionFailures >= 3 && !lamp.config.hasConnectedOnce) {
         console.log(
-          `⏱️ New lamp ${lamp.config.name} timed out ${lamp.connectionFailures} times, blacklisting`
+          `⏱️ New lamp ${lamp.config.name} timed out ${lamp.connectionFailures} times, blacklisting`,
         );
         lamp.pairingRequired = true;
         this.removeLampFromConfig(lampId);
@@ -699,7 +673,7 @@ export class HueLampManager {
         !lamp.config.hasConnectedOnce
       ) {
         console.log(
-          `⚠️ New lamp ${lamp.config.name} failed ${lamp.connectionFailures} times, blacklisting`
+          `⚠️ New lamp ${lamp.config.name} failed ${lamp.connectionFailures} times, blacklisting`,
         );
         lamp.pairingRequired = true;
         this.removeLampFromConfig(lampId);
@@ -752,8 +726,7 @@ export class HueLampManager {
     // Clear existing characteristics before rediscovery
     lamp.characteristics = {};
 
-    const { characteristics } =
-      await lamp.peripheral.discoverAllServicesAndCharacteristicsAsync();
+    const { characteristics } = await lamp.peripheral.discoverAllServicesAndCharacteristicsAsync();
 
     for (const char of characteristics) {
       const uuid = char.uuid;
@@ -781,7 +754,7 @@ export class HueLampManager {
     console.log(
       `📋 Discovered ${foundChars.length} characteristics for ${
         lamp.config.name
-      }: ${foundChars.join(", ")}`
+      }: ${foundChars.join(", ")}`,
     );
 
     // Discover temperature limits if lamp supports temperature
@@ -800,33 +773,24 @@ export class HueLampManager {
     if (!lamp?.characteristics.temperature) return;
 
     // Check if we already have saved limits in config
-    if (
-      lamp.config.temperatureMin !== undefined &&
-      lamp.config.temperatureMax !== undefined
-    ) {
+    if (lamp.config.temperatureMin !== undefined && lamp.config.temperatureMax !== undefined) {
       lamp.state.temperatureMin = lamp.config.temperatureMin;
       lamp.state.temperatureMax = lamp.config.temperatureMax;
       console.log(
-        `🌡️ ${lamp.config.name} using saved temperature limits: ${lamp.state.temperatureMin}% - ${lamp.state.temperatureMax}%`
+        `🌡️ ${lamp.config.name} using saved temperature limits: ${lamp.state.temperatureMin}% - ${lamp.state.temperatureMax}%`,
       );
 
       // Restore last saved temperature if available
       if (lamp.config.lastTemperature !== undefined) {
         try {
           const rawTemp = toTemperature(lamp.config.lastTemperature);
-          await lamp.characteristics.temperature.writeAsync(
-            Buffer.from([rawTemp, 0x01]),
-            false
-          );
+          await lamp.characteristics.temperature.writeAsync(Buffer.from([rawTemp, 0x01]), false);
           lamp.state.temperature = lamp.config.lastTemperature;
           console.log(
-            `🌡️ ${lamp.config.name} restored temperature to ${lamp.config.lastTemperature}% (raw: ${rawTemp})`
+            `🌡️ ${lamp.config.name} restored temperature to ${lamp.config.lastTemperature}% (raw: ${rawTemp})`,
           );
         } catch (error) {
-          console.error(
-            `❌ Failed to restore temperature for ${lamp.config.name}:`,
-            error
-          );
+          console.error(`❌ Failed to restore temperature for ${lamp.config.name}:`, error);
         }
       }
       return;
@@ -841,32 +805,27 @@ export class HueLampManager {
       if (currentData.length >= 2 && currentData[1] === 0x01) {
         currentRaw = currentData[0];
         console.log(
-          `🌡️ ${lamp.config.name} current temperature before discovery: raw=${currentRaw}`
+          `🌡️ ${lamp.config.name} current temperature before discovery: raw=${currentRaw}`,
         );
       }
 
       // Test minimum (warmest) - send raw 244 (0%)
       // This is the most restrictive limit - some lamps can't go very warm
       const minRaw = toTemperature(0);
-      await lamp.characteristics.temperature.writeAsync(
-        Buffer.from([minRaw, 0x01]),
-        false
-      );
+      await lamp.characteristics.temperature.writeAsync(Buffer.from([minRaw, 0x01]), false);
       await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for lamp to settle
       const minData = await lamp.characteristics.temperature.readAsync();
       if (minData.length >= 2 && minData[1] === 0x01) {
         lamp.state.temperatureMin = parseTemperature(minData[0]);
         console.log(
-          `🌡️ ${lamp.config.name} min temperature: ${lamp.state.temperatureMin}% (raw: ${minData[0]})`
+          `🌡️ ${lamp.config.name} min temperature: ${lamp.state.temperatureMin}% (raw: ${minData[0]})`,
         );
       }
 
       // Always allow max to be 100% - lamps generally accept cool temperatures fine
       // The min limit is what matters for warm temperatures
       lamp.state.temperatureMax = 100;
-      console.log(
-        `🌡️ ${lamp.config.name} max temperature: 100% (always allowed)`
-      );
+      console.log(`🌡️ ${lamp.config.name} max temperature: 100% (always allowed)`);
 
       // Save limits to config for persistence
       lamp.config.temperatureMin = lamp.state.temperatureMin;
@@ -876,23 +835,17 @@ export class HueLampManager {
       this.saveConfig();
 
       // Restore to original value
-      await lamp.characteristics.temperature.writeAsync(
-        Buffer.from([currentRaw, 0x01]),
-        false
-      );
+      await lamp.characteristics.temperature.writeAsync(Buffer.from([currentRaw, 0x01]), false);
       lamp.state.temperature = parseTemperature(currentRaw);
       console.log(
-        `🌡️ ${lamp.config.name} restored to ${lamp.state.temperature}% (raw: ${currentRaw})`
+        `🌡️ ${lamp.config.name} restored to ${lamp.state.temperature}% (raw: ${currentRaw})`,
       );
 
       console.log(
-        `🌡️ ${lamp.config.name} temperature range: ${lamp.state.temperatureMin}% - ${lamp.state.temperatureMax}%`
+        `🌡️ ${lamp.config.name} temperature range: ${lamp.state.temperatureMin}% - ${lamp.state.temperatureMax}%`,
       );
     } catch (error) {
-      console.error(
-        `❌ Failed to discover temperature limits for ${lamp.config.name}:`,
-        error
-      );
+      console.error(`❌ Failed to discover temperature limits for ${lamp.config.name}:`, error);
       // Default to full range on error
       lamp.state.temperatureMin = 0;
       lamp.state.temperatureMax = 100;
@@ -919,17 +872,13 @@ export class HueLampManager {
             lamp.state.isOn = data[0] === 0x01;
             if (wasOn !== lamp.state.isOn) {
               console.log(
-                `💡 ${lamp.config.name} power changed: ${
-                  lamp.state.isOn ? "ON" : "OFF"
-                }`
+                `💡 ${lamp.config.name} power changed: ${lamp.state.isOn ? "ON" : "OFF"}`,
               );
             }
           });
 
           await powerChar.subscribeAsync();
-          console.log(
-            `🔔 Subscribed to power notifications for ${lamp.config.name}`
-          );
+          console.log(`🔔 Subscribed to power notifications for ${lamp.config.name}`);
         }
       }
 
@@ -942,16 +891,12 @@ export class HueLampManager {
             const oldBrightness = lamp.state.brightness;
             lamp.state.brightness = data[0];
             if (oldBrightness !== lamp.state.brightness) {
-              console.log(
-                `💡 ${lamp.config.name} brightness changed: ${lamp.state.brightness}`
-              );
+              console.log(`💡 ${lamp.config.name} brightness changed: ${lamp.state.brightness}`);
             }
           });
 
           await brightnessChar.subscribeAsync();
-          console.log(
-            `🔔 Subscribed to brightness notifications for ${lamp.config.name}`
-          );
+          console.log(`🔔 Subscribed to brightness notifications for ${lamp.config.name}`);
         }
       }
 
@@ -964,27 +909,18 @@ export class HueLampManager {
             // Parse control characteristic data
             // Format varies but typically includes power and brightness
             if (data.length >= 1) {
-              console.log(
-                `💡 ${lamp.config.name} control notification: ${data.toString(
-                  "hex"
-                )}`
-              );
+              console.log(`💡 ${lamp.config.name} control notification: ${data.toString("hex")}`);
               // Refresh full state on control changes
               this.refreshLampState(lampId).catch(() => {});
             }
           });
 
           await controlChar.subscribeAsync();
-          console.log(
-            `🔔 Subscribed to control notifications for ${lamp.config.name}`
-          );
+          console.log(`🔔 Subscribed to control notifications for ${lamp.config.name}`);
         }
       }
     } catch (error) {
-      console.error(
-        `⚠️ Failed to subscribe to notifications for ${lamp.config.name}:`,
-        error
-      );
+      console.error(`⚠️ Failed to subscribe to notifications for ${lamp.config.name}:`, error);
       // Non-fatal error - polling will still work as fallback
     }
   }
@@ -1025,7 +961,7 @@ export class HueLampManager {
       }
 
       console.log(
-        `📋 Device info: ${lamp.info.name} (${lamp.info.model}) - ${lamp.info.manufacturer}`
+        `📋 Device info: ${lamp.info.name} (${lamp.info.model}) - ${lamp.info.manufacturer}`,
       );
     } catch (error) {
       console.error(`❌ Failed to read device info for ${lampId}:`, error);
@@ -1038,7 +974,7 @@ export class HueLampManager {
    */
   async refreshLampState(
     lampId: string,
-    skipConnectionCheck = false
+    skipConnectionCheck = false,
   ): Promise<HueLampState | null> {
     const lamp = this.lamps.get(lampId);
     if (!lamp) {
@@ -1052,9 +988,7 @@ export class HueLampManager {
 
     // Check peripheral state first - detect disconnects early
     if (!lamp.peripheral || lamp.peripheral.state !== "connected") {
-      console.log(
-        `🔌 ${lamp.config.name} peripheral disconnected during refresh`
-      );
+      console.log(`🔌 ${lamp.config.name} peripheral disconnected during refresh`);
       lamp.isConnected = false;
       lamp.state.reachable = false;
       lamp.characteristics = {};
@@ -1069,11 +1003,7 @@ export class HueLampManager {
       if (lamp.characteristics.power) {
         const data = await lamp.characteristics.power.readAsync();
         lamp.state.isOn = data[0] === 0x01;
-        console.log(
-          `💡 ${lamp.config.name} power state: ${
-            lamp.state.isOn ? "ON" : "OFF"
-          }`
-        );
+        console.log(`💡 ${lamp.config.name} power state: ${lamp.state.isOn ? "ON" : "OFF"}`);
       }
 
       // Read brightness
@@ -1088,28 +1018,22 @@ export class HueLampManager {
         console.log(
           `🌡️ ${lamp.config.name} raw temperature data:`,
           data.toString("hex"),
-          `bytes: [${data[0]}, ${data[1]}]`
+          `bytes: [${data[0]}, ${data[1]}]`,
         );
         if (data.length >= 2 && data[1] === 0x01) {
           // Convert raw value (1-244) to percentage (0-100)
           const rawTemp = data[0];
           const parsedTemp = parseTemperature(rawTemp);
           console.log(
-            `🌡️ ${lamp.config.name} temperature: raw=${rawTemp} -> parsed=${parsedTemp}%`
+            `🌡️ ${lamp.config.name} temperature: raw=${rawTemp} -> parsed=${parsedTemp}%`,
           );
           lamp.state.temperature = parsedTemp;
 
           // Update observed min/max limits
-          if (
-            lamp.state.temperatureMin === undefined ||
-            parsedTemp < lamp.state.temperatureMin
-          ) {
+          if (lamp.state.temperatureMin === undefined || parsedTemp < lamp.state.temperatureMin) {
             lamp.state.temperatureMin = parsedTemp;
           }
-          if (
-            lamp.state.temperatureMax === undefined ||
-            parsedTemp > lamp.state.temperatureMax
-          ) {
+          if (lamp.state.temperatureMax === undefined || parsedTemp > lamp.state.temperatureMax) {
             lamp.state.temperatureMax = parsedTemp;
           }
         }
@@ -1125,9 +1049,7 @@ export class HueLampManager {
       lamp.state.reachable = false;
       lamp.characteristics = {};
 
-      console.log(
-        `🔌 ${lamp.config.name} marked as disconnected due to read failure`
-      );
+      console.log(`🔌 ${lamp.config.name} marked as disconnected due to read failure`);
 
       if (!skipConnectionCheck) {
         this.scheduleReconnect(lampId);
@@ -1146,7 +1068,7 @@ export class HueLampManager {
 
     if (lamp.reconnectAttempts >= HUE_CONFIG.MAX_RECONNECT_ATTEMPTS) {
       console.log(
-        `💡 Max reconnect attempts reached for ${lamp.config.name}, waiting for next scan to rediscover...`
+        `💡 Max reconnect attempts reached for ${lamp.config.name}, waiting for next scan to rediscover...`,
       );
       lamp.reconnectAttempts = 0;
       // Clear the peripheral reference so next scan provides a fresh one
@@ -1159,12 +1081,11 @@ export class HueLampManager {
       clearTimeout(lamp.reconnectTimeout);
     }
 
-    const delay =
-      HUE_CONFIG.RECONNECT_DELAY_MS * Math.pow(2, lamp.reconnectAttempts);
+    const delay = HUE_CONFIG.RECONNECT_DELAY_MS * Math.pow(2, lamp.reconnectAttempts);
     lamp.reconnectAttempts++;
 
     console.log(
-      `🔄 Scheduling reconnect for ${lamp.config.name} in ${delay}ms (attempt ${lamp.reconnectAttempts})`
+      `🔄 Scheduling reconnect for ${lamp.config.name} in ${delay}ms (attempt ${lamp.reconnectAttempts})`,
     );
 
     lamp.reconnectTimeout = setTimeout(() => {
@@ -1225,15 +1146,12 @@ export class HueLampManager {
     // Check if we have valid characteristics
     if (!lamp.characteristics.power && !lamp.characteristics.control) {
       console.error(
-        `❌ Lamp ${lamp.config.name} has no power/control characteristics, trying to rediscover...`
+        `❌ Lamp ${lamp.config.name} has no power/control characteristics, trying to rediscover...`,
       );
       try {
         await this.discoverCharacteristics(lampId);
       } catch (error) {
-        console.error(
-          `❌ Failed to rediscover characteristics for ${lamp.config.name}:`,
-          error
-        );
+        console.error(`❌ Failed to rediscover characteristics for ${lamp.config.name}:`, error);
         return false;
       }
     }
@@ -1253,7 +1171,7 @@ export class HueLampManager {
         return true;
       }
       console.error(
-        `❌ Lamp ${lamp.config.name} has no power/control characteristics after rediscovery`
+        `❌ Lamp ${lamp.config.name} has no power/control characteristics after rediscovery`,
       );
       return false;
     } catch (error) {
@@ -1282,15 +1200,12 @@ export class HueLampManager {
     // Check if we have valid characteristics
     if (!lamp.characteristics.brightness && !lamp.characteristics.control) {
       console.error(
-        `❌ Lamp ${lamp.config.name} has no brightness/control characteristics, trying to rediscover...`
+        `❌ Lamp ${lamp.config.name} has no brightness/control characteristics, trying to rediscover...`,
       );
       try {
         await this.discoverCharacteristics(lampId);
       } catch (error) {
-        console.error(
-          `❌ Failed to rediscover characteristics for ${lamp.config.name}:`,
-          error
-        );
+        console.error(`❌ Failed to rediscover characteristics for ${lamp.config.name}:`, error);
         return false;
       }
     }
@@ -1300,28 +1215,21 @@ export class HueLampManager {
         const data = Buffer.from([brightness]);
         await lamp.characteristics.brightness.writeAsync(data, false);
         lamp.state.brightness = brightness;
-        console.log(
-          `💡 Lamp ${lamp.config.name} brightness set to ${percentage}%`
-        );
+        console.log(`💡 Lamp ${lamp.config.name} brightness set to ${percentage}%`);
         return true;
       } else if (lamp.characteristics.control) {
         const command = buildControlCommand({ brightness });
         await lamp.characteristics.control.writeAsync(command, false);
         lamp.state.brightness = brightness;
-        console.log(
-          `💡 Lamp ${lamp.config.name} brightness set to ${percentage}%`
-        );
+        console.log(`💡 Lamp ${lamp.config.name} brightness set to ${percentage}%`);
         return true;
       }
       console.error(
-        `❌ Lamp ${lamp.config.name} has no brightness/control characteristics after rediscovery`
+        `❌ Lamp ${lamp.config.name} has no brightness/control characteristics after rediscovery`,
       );
       return false;
     } catch (error) {
-      console.error(
-        `❌ Failed to set brightness for ${lamp.config.name}:`,
-        error
-      );
+      console.error(`❌ Failed to set brightness for ${lamp.config.name}:`, error);
       // Mark as disconnected if write fails - characteristics may be stale
       lamp.isConnected = false;
       lamp.state.reachable = false;
@@ -1349,15 +1257,12 @@ export class HueLampManager {
     // Check if we have temperature characteristic
     if (!lamp.characteristics.temperature && !lamp.characteristics.control) {
       console.error(
-        `❌ Lamp ${lamp.config.name} has no temperature/control characteristics, trying to rediscover...`
+        `❌ Lamp ${lamp.config.name} has no temperature/control characteristics, trying to rediscover...`,
       );
       try {
         await this.discoverCharacteristics(lampId);
       } catch (error) {
-        console.error(
-          `❌ Failed to rediscover characteristics for ${lamp.config.name}:`,
-          error
-        );
+        console.error(`❌ Failed to rediscover characteristics for ${lamp.config.name}:`, error);
         return false;
       }
     }
@@ -1372,7 +1277,7 @@ export class HueLampManager {
         lamp.config.lastTemperature = temperature;
         this.saveConfig();
         console.log(
-          `💡 Lamp ${lamp.config.name} temperature set to ${temperature}% (raw: ${rawTemp})`
+          `💡 Lamp ${lamp.config.name} temperature set to ${temperature}% (raw: ${rawTemp})`,
         );
         return true;
       } else if (lamp.characteristics.control) {
@@ -1383,19 +1288,14 @@ export class HueLampManager {
         lamp.config.lastTemperature = temperature;
         this.saveConfig();
         console.log(
-          `💡 Lamp ${lamp.config.name} temperature set to ${temperature}% (raw: ${rawTemp})`
+          `💡 Lamp ${lamp.config.name} temperature set to ${temperature}% (raw: ${rawTemp})`,
         );
         return true;
       }
-      console.error(
-        `❌ Lamp ${lamp.config.name} does not support color temperature`
-      );
+      console.error(`❌ Lamp ${lamp.config.name} does not support color temperature`);
       return false;
     } catch (error) {
-      console.error(
-        `❌ Failed to set temperature for ${lamp.config.name}:`,
-        error
-      );
+      console.error(`❌ Failed to set temperature for ${lamp.config.name}:`, error);
       // Mark as disconnected if write fails
       lamp.isConnected = false;
       lamp.state.reachable = false;
@@ -1408,11 +1308,7 @@ export class HueLampManager {
   /**
    * Set lamp power and brightness together
    */
-  async setLampState(
-    lampId: string,
-    on: boolean,
-    brightness?: number
-  ): Promise<boolean> {
+  async setLampState(lampId: string, on: boolean, brightness?: number): Promise<boolean> {
     const lamp = this.lamps.get(lampId);
     if (!lamp?.isConnected) {
       console.error(`❌ Lamp ${lampId} not connected`);
@@ -1431,7 +1327,7 @@ export class HueLampManager {
           lamp.state.brightness = toBrightness(brightness);
         }
         console.log(
-          `💡 Lamp ${lamp.config.name} state updated: on=${on}, brightness=${brightness}%`
+          `💡 Lamp ${lamp.config.name} state updated: on=${on}, brightness=${brightness}%`,
         );
         return true;
       } else {
@@ -1444,10 +1340,7 @@ export class HueLampManager {
         return powerResult;
       }
     } catch (error) {
-      console.error(
-        `❌ Failed to set lamp state for ${lamp.config.name}:`,
-        error
-      );
+      console.error(`❌ Failed to set lamp state for ${lamp.config.name}:`, error);
       // Mark as disconnected if write fails
       lamp.isConnected = false;
       lamp.state.reachable = false;
@@ -1543,9 +1436,7 @@ export class HueLampManager {
 
     // Check peripheral state first
     if (!lamp.peripheral || lamp.peripheral.state !== "connected") {
-      console.log(
-        `🔌 ${lamp.config.name} peripheral not connected, updating state...`
-      );
+      console.log(`🔌 ${lamp.config.name} peripheral not connected, updating state...`);
       lamp.isConnected = false;
       lamp.state.reachable = false;
       lamp.characteristics = {};
@@ -1557,14 +1448,12 @@ export class HueLampManager {
     const READ_TIMEOUT_MS = 3000;
 
     try {
-      const readWithTimeout = async (
-        char: typeof lamp.characteristics.power
-      ) => {
+      const readWithTimeout = async (char: typeof lamp.characteristics.power) => {
         if (!char) throw new Error("No characteristic");
         return Promise.race([
           char.readAsync(),
           new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("Read timeout")), READ_TIMEOUT_MS)
+            setTimeout(() => reject(new Error("Read timeout")), READ_TIMEOUT_MS),
           ),
         ]);
       };
@@ -1578,26 +1467,20 @@ export class HueLampManager {
       } else {
         // No characteristics - try to rediscover
         console.log(
-          `⚠️ ${lamp.config.name} has no readable characteristics, trying to rediscover...`
+          `⚠️ ${lamp.config.name} has no readable characteristics, trying to rediscover...`,
         );
         await Promise.race([
           this.discoverCharacteristics(lampId),
           new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error("Discovery timeout")),
-              READ_TIMEOUT_MS
-            )
+            setTimeout(() => reject(new Error("Discovery timeout")), READ_TIMEOUT_MS),
           ),
         ]);
         return (
-          lamp.characteristics.power !== undefined ||
-          lamp.characteristics.brightness !== undefined
+          lamp.characteristics.power !== undefined || lamp.characteristics.brightness !== undefined
         );
       }
     } catch (error) {
-      console.log(
-        `🔌 ${lamp.config.name} failed connection verification: ${error}`
-      );
+      console.log(`🔌 ${lamp.config.name} failed connection verification: ${error}`);
       lamp.isConnected = false;
       lamp.state.reachable = false;
       lamp.characteristics = {};
@@ -1605,9 +1488,7 @@ export class HueLampManager {
       // Try to disconnect the peripheral to clean up BLE state
       try {
         if (lamp.peripheral && lamp.peripheral.state === "connected") {
-          console.log(
-            `🔌 Force disconnecting stale peripheral for ${lamp.config.name}`
-          );
+          console.log(`🔌 Force disconnecting stale peripheral for ${lamp.config.name}`);
           await lamp.peripheral.disconnectAsync();
         }
       } catch (disconnectError) {
@@ -1694,9 +1575,7 @@ export class HueLampManager {
     // Wait a bit for scan to discover peripherals
     await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    console.log(
-      `📡 Discovered ${this.discoveredPeripherals.size} peripherals during scan`
-    );
+    console.log(`📡 Discovered ${this.discoveredPeripherals.size} peripherals during scan`);
 
     // Check which lamps are in range after scan
     // IMPORTANT: Only check discoveredPeripherals, not lamp.peripheral (which may be stale)
@@ -1708,14 +1587,12 @@ export class HueLampManager {
       const isInRange = discoveredPeripheral !== undefined;
 
       console.log(
-        `📍 ${lamp.config.name}: isConnected=${lamp.isConnected}, isInRange=${isInRange}`
+        `📍 ${lamp.config.name}: isConnected=${lamp.isConnected}, isInRange=${isInRange}`,
       );
 
       if (lamp.isConnected && !isInRange) {
         // Lamp was connected but not found in scan - mark as disconnected
-        console.log(
-          `📡 ${lamp.config.name} no longer in range, marking as disconnected`
-        );
+        console.log(`📡 ${lamp.config.name} no longer in range, marking as disconnected`);
         lamp.isConnected = false;
         lamp.state.reachable = false;
         lamp.characteristics = {};
@@ -1736,9 +1613,7 @@ export class HueLampManager {
     }
 
     // Force refresh all still-connected lamps
-    console.log(
-      `🔄 Force refreshing ${lampsToRefresh.length} connected lamps...`
-    );
+    console.log(`🔄 Force refreshing ${lampsToRefresh.length} connected lamps...`);
     for (const lampId of lampsToRefresh) {
       // Re-verify the lamp is still connected after range check
       const lamp = this.lamps.get(lampId);
@@ -1749,13 +1624,11 @@ export class HueLampManager {
 
     // Try to connect disconnected lamps that were discovered during scan
     const disconnectedLamps = Array.from(this.lamps.entries()).filter(
-      ([id, lamp]) => !lamp.isConnected && !lampsToRefresh.includes(id)
+      ([id, lamp]) => !lamp.isConnected && !lampsToRefresh.includes(id),
     );
 
     if (disconnectedLamps.length > 0) {
-      console.log(
-        `🔗 Attempting to connect ${disconnectedLamps.length} disconnected lamps...`
-      );
+      console.log(`🔗 Attempting to connect ${disconnectedLamps.length} disconnected lamps...`);
       for (const [lampId, lamp] of disconnectedLamps) {
         // Check if we have a peripheral for this lamp (discovered during scan)
         const peripheral =

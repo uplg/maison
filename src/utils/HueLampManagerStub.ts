@@ -3,11 +3,7 @@
  * Returns empty data for all operations
  */
 
-import type {
-  IHueLampManager,
-  HueLampInstance,
-  ConnectionStats,
-} from "./HueLampManagerInterface";
+import type { IHueLampManager, HueLampInstance, ConnectionStats } from "./HueLampManagerInterface";
 
 const DISABLED_MESSAGE = "Bluetooth is disabled in Docker environment";
 
@@ -76,11 +72,7 @@ export class HueLampManager implements IHueLampManager {
     return false;
   }
 
-  async setLampState(
-    _id: string,
-    _isOn: boolean,
-    _brightness?: number
-  ): Promise<boolean> {
+  async setLampState(_id: string, _isOn: boolean, _brightness?: number): Promise<boolean> {
     return false;
   }
 

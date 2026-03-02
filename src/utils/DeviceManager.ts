@@ -91,9 +91,7 @@ export class DeviceManager {
           this.deviceCache.set(deviceId, dpsValues);
         }
 
-        console.log(
-          `📋 Loaded device cache for ${this.deviceCache.size} devices`
-        );
+        console.log(`📋 Loaded device cache for ${this.deviceCache.size} devices`);
       } else {
         console.log(`📋 No device cache found, starting fresh`);
       }
@@ -110,11 +108,7 @@ export class DeviceManager {
         cache[deviceId] = dpsValues;
       }
 
-      fs.writeFileSync(
-        this.deviceCachePath,
-        JSON.stringify(cache, null, 2),
-        "utf8"
-      );
+      fs.writeFileSync(this.deviceCachePath, JSON.stringify(cache, null, 2), "utf8");
       console.log(`💾 Saved device cache for ${this.deviceCache.size} devices`);
     } catch (error) {
       console.error("❌ Failed to save device cache:", error);
@@ -144,7 +138,7 @@ export class DeviceManager {
   }
 
   private determineDeviceType(
-    config: DeviceConfig
+    config: DeviceConfig,
   ): "feeder" | "litter-box" | "fountain" | "unknown" {
     const productName = config.product_name.toLowerCase();
     const category = config.category.toLowerCase();
@@ -236,7 +230,7 @@ export class DeviceManager {
                 `⚠️ Corrupted data detected from ${config.name}. This usually indicates:
                 - Incorrect device key in devices.json
                 - Wrong protocol version
-                - Device communication issues`
+                - Device communication issues`,
               );
               console.log(`Raw corrupted data:`, data);
               return;
@@ -247,17 +241,11 @@ export class DeviceManager {
           deviceInstance.lastData = { ...deviceInstance.lastData, ...data };
 
           if (deviceInstance.type === "feeder") {
-            deviceInstance.parsedData = parseFeederStatus(
-              deviceInstance.lastData
-            );
+            deviceInstance.parsedData = parseFeederStatus(deviceInstance.lastData);
           } else if (deviceInstance.type === "litter-box") {
-            deviceInstance.parsedData = parseLitterBoxStatus(
-              deviceInstance.lastData
-            );
+            deviceInstance.parsedData = parseLitterBoxStatus(deviceInstance.lastData);
           } else if (deviceInstance.type === "fountain") {
-            deviceInstance.parsedData = parseFountainStatus(
-              deviceInstance.lastData
-            );
+            deviceInstance.parsedData = parseFountainStatus(deviceInstance.lastData);
           }
 
           this.handleDeviceData(deviceInstance, data);
@@ -277,60 +265,39 @@ export class DeviceManager {
     switch (device.type) {
       case "feeder":
         if (data.dps["1"]) {
-          console.log(
-            `🍽️ Meal plan reported by ${device.config.name}:`,
-            data.dps["1"]
-          );
+          console.log(`🍽️ Meal plan reported by ${device.config.name}:`, data.dps["1"]);
           // Cache meal plan (DPS 1) - persists across restarts
           this.cacheDPS(device.config.id, "1", data.dps["1"]);
         }
         if (data.dps["3"]) {
-          console.log(
-            `🐱 Feeding activity from ${device.config.name}:`,
-            data.dps["3"]
-          );
+          console.log(`🐱 Feeding activity from ${device.config.name}:`, data.dps["3"]);
         }
         break;
 
       case "litter-box":
-        console.warn(
-          `🚽 Litter box data received from ${device.config.name}:`,
-          data.dps
-        );
+        console.warn(`🚽 Litter box data received from ${device.config.name}:`, data.dps);
         if (data.dps["105"]) {
           console.log(
             `🚽 Litter box defecation frequency from ${device.config.name}:`,
-            data.dps["105"]
+            data.dps["105"],
           );
         }
         if (data.dps["112"]) {
-          console.log(
-            `🗑️ Litter level event from ${device.config.name}:`,
-            data.dps["112"]
-          );
+          console.log(`🗑️ Litter level event from ${device.config.name}:`, data.dps["112"]);
           // Cache this value - DPS 112 is a "report-only" datapoint that only comes via push events
           // It won't be returned by get() or refresh() calls, so we need to cache it
           this.cacheDPS(device.config.id, "112", data.dps["112"]);
         }
         // Log all DPS received for debugging
-        console.log(
-          `📋 Litter box DPS received:`,
-          Object.keys(data.dps).join(", ")
-        );
+        console.log(`📋 Litter box DPS received:`, Object.keys(data.dps).join(", "));
         break;
 
       case "fountain":
         if (data.dps["1"]) {
-          console.log(
-            `💧 Fountain power state from ${device.config.name}:`,
-            data.dps["1"]
-          );
+          console.log(`💧 Fountain power state from ${device.config.name}:`, data.dps["1"]);
         }
         if (data.dps["101"]) {
-          console.log(
-            `💧 Water level from ${device.config.name}:`,
-            data.dps["101"]
-          );
+          console.log(`💧 Water level from ${device.config.name}:`, data.dps["101"]);
         }
         break;
     }
@@ -342,7 +309,7 @@ export class DeviceManager {
   private getReconnectDelay(attempts: number): number {
     const delay = Math.min(
       CONNECTION_CONFIG.INITIAL_RECONNECT_DELAY_MS * Math.pow(2, attempts),
-      CONNECTION_CONFIG.MAX_RECONNECT_DELAY_MS
+      CONNECTION_CONFIG.MAX_RECONNECT_DELAY_MS,
     );
     // Add jitter to prevent thundering herd
     return delay + Math.random() * 1000;
@@ -364,7 +331,7 @@ export class DeviceManager {
     // Check if we've exceeded max attempts
     if (device.reconnectAttempts >= CONNECTION_CONFIG.MAX_RECONNECT_ATTEMPTS) {
       console.log(
-        `🚫 Max reconnection attempts reached for ${device.config.name}. Will retry on next API call.`
+        `🚫 Max reconnection attempts reached for ${device.config.name}. Will retry on next API call.`,
       );
       return;
     }
@@ -374,10 +341,8 @@ export class DeviceManager {
 
     console.log(
       `🔄 Scheduling reconnection for ${device.config.name} in ${Math.round(
-        delay / 1000
-      )}s (attempt ${device.reconnectAttempts}/${
-        CONNECTION_CONFIG.MAX_RECONNECT_ATTEMPTS
-      })`
+        delay / 1000,
+      )}s (attempt ${device.reconnectAttempts}/${CONNECTION_CONFIG.MAX_RECONNECT_ATTEMPTS})`,
     );
 
     device.reconnectTimeout = setTimeout(async () => {
@@ -390,7 +355,7 @@ export class DeviceManager {
       } catch (error) {
         console.log(
           `⚠️ Reconnection failed for ${device.config.name}:`,
-          error instanceof Error ? error.message : error
+          error instanceof Error ? error.message : error,
         );
         // Will be rescheduled by the disconnect event
       }
@@ -472,7 +437,7 @@ export class DeviceManager {
       } catch (error) {
         console.log(
           `💔 Heartbeat failed for ${device.config.name}:`,
-          error instanceof Error ? error.message : error
+          error instanceof Error ? error.message : error,
         );
       }
     }, CONNECTION_CONFIG.HEARTBEAT_INTERVAL_MS);
@@ -506,9 +471,7 @@ export class DeviceManager {
 
     // If stuck in connecting state, force reset
     if (device.isConnecting) {
-      console.log(
-        `⚠️ Device ${device.config.name} stuck in connecting state, forcing reset...`
-      );
+      console.log(`⚠️ Device ${device.config.name} stuck in connecting state, forcing reset...`);
       this.forceDisconnect(deviceId);
     }
 
@@ -516,14 +479,10 @@ export class DeviceManager {
     device.reconnectAttempts = 0;
 
     let lastError: Error | null = null;
-    for (
-      let attempt = 1;
-      attempt <= CONNECTION_CONFIG.COMMAND_RETRY_ATTEMPTS;
-      attempt++
-    ) {
+    for (let attempt = 1; attempt <= CONNECTION_CONFIG.COMMAND_RETRY_ATTEMPTS; attempt++) {
       try {
         console.log(
-          `🔌 Connecting to ${device.config.name} (attempt ${attempt}/${CONNECTION_CONFIG.COMMAND_RETRY_ATTEMPTS})...`
+          `🔌 Connecting to ${device.config.name} (attempt ${attempt}/${CONNECTION_CONFIG.COMMAND_RETRY_ATTEMPTS})...`,
         );
         await this.connectDeviceWithTimeout(deviceId);
 
@@ -534,7 +493,7 @@ export class DeviceManager {
         lastError = error instanceof Error ? error : new Error(String(error));
         console.log(
           `⚠️ Connection attempt ${attempt} failed for ${device.config.name}:`,
-          lastError.message
+          lastError.message,
         );
 
         // Force disconnect to clean up any bad state
@@ -547,7 +506,7 @@ export class DeviceManager {
     }
 
     throw new Error(
-      `Failed to connect to ${device.config.name} after ${CONNECTION_CONFIG.COMMAND_RETRY_ATTEMPTS} attempts: ${lastError?.message}`
+      `Failed to connect to ${device.config.name} after ${CONNECTION_CONFIG.COMMAND_RETRY_ATTEMPTS} attempts: ${lastError?.message}`,
     );
   }
 
@@ -561,11 +520,7 @@ export class DeviceManager {
   /**
    * Wrap a promise with a timeout
    */
-  private withTimeout<T>(
-    promise: Promise<T>,
-    ms: number,
-    errorMessage: string
-  ): Promise<T> {
+  private withTimeout<T>(promise: Promise<T>, ms: number, errorMessage: string): Promise<T> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error(errorMessage));
@@ -648,30 +603,24 @@ export class DeviceManager {
   async connectAllDevices(): Promise<void> {
     console.log("🔗 Connecting to all devices...");
 
-    const connectionPromises = Array.from(this.devices).map(
-      async ([deviceId, device]) => {
-        try {
-          await this.connectDevice(deviceId);
-          console.log(`✅ Connected to ${device.config.name}`);
-        } catch (error) {
-          console.error(
-            `⚠️ Failed to connect ${device.config.name}:`,
-            error instanceof Error ? error.message : error
-          );
-          // Schedule reconnection for failed devices
-          this.scheduleReconnect(deviceId);
-        }
+    const connectionPromises = Array.from(this.devices).map(async ([deviceId, device]) => {
+      try {
+        await this.connectDevice(deviceId);
+        console.log(`✅ Connected to ${device.config.name}`);
+      } catch (error) {
+        console.error(
+          `⚠️ Failed to connect ${device.config.name}:`,
+          error instanceof Error ? error.message : error,
+        );
+        // Schedule reconnection for failed devices
+        this.scheduleReconnect(deviceId);
       }
-    );
+    });
 
     await Promise.allSettled(connectionPromises);
 
-    const connectedCount = Array.from(this.devices.values()).filter(
-      (d) => d.isConnected
-    ).length;
-    console.log(
-      `🔗 Connection complete: ${connectedCount}/${this.devices.size} devices connected`
-    );
+    const connectedCount = Array.from(this.devices.values()).filter((d) => d.isConnected).length;
+    console.log(`🔗 Connection complete: ${connectedCount}/${this.devices.size} devices connected`);
   }
 
   disconnectAllDevices(): void {
@@ -708,7 +657,7 @@ export class DeviceManager {
     deviceId: string,
     dps: number,
     value: string | number | boolean,
-    disconnectAfter: boolean = false
+    disconnectAfter: boolean = false,
   ): Promise<void> {
     const device = this.devices.get(deviceId);
     if (!device) {
@@ -717,18 +666,12 @@ export class DeviceManager {
 
     let lastError: Error | null = null;
 
-    for (
-      let attempt = 1;
-      attempt <= CONNECTION_CONFIG.COMMAND_RETRY_ATTEMPTS;
-      attempt++
-    ) {
+    for (let attempt = 1; attempt <= CONNECTION_CONFIG.COMMAND_RETRY_ATTEMPTS; attempt++) {
       try {
         await this.ensureConnected(deviceId);
 
         await device.api.set({ dps, set: value });
-        console.log(
-          `📤 Command sent to ${device.config.name}: DPS ${dps} = ${value}`
-        );
+        console.log(`📤 Command sent to ${device.config.name}: DPS ${dps} = ${value}`);
 
         if (disconnectAfter) {
           await this.disconnectDevice(deviceId);
@@ -739,7 +682,7 @@ export class DeviceManager {
         lastError = error instanceof Error ? error : new Error(String(error));
         console.log(
           `⚠️ Command attempt ${attempt}/${CONNECTION_CONFIG.COMMAND_RETRY_ATTEMPTS} failed for ${device.config.name}:`,
-          lastError.message
+          lastError.message,
         );
 
         device.isConnected = false;
@@ -751,7 +694,7 @@ export class DeviceManager {
     }
 
     throw new Error(
-      `Failed to send command to ${device.config.name} after ${CONNECTION_CONFIG.COMMAND_RETRY_ATTEMPTS} attempts: ${lastError?.message}`
+      `Failed to send command to ${device.config.name} after ${CONNECTION_CONFIG.COMMAND_RETRY_ATTEMPTS} attempts: ${lastError?.message}`,
     );
   }
 
@@ -773,7 +716,7 @@ export class DeviceManager {
         const response = await this.withTimeout(
           device.api.get({ schema: true }) as Promise<DPSObject>,
           CONNECTION_CONFIG.STATUS_REQUEST_TIMEOUT_MS,
-          `Status request timeout for ${device.config.name}`
+          `Status request timeout for ${device.config.name}`,
         );
         console.log(`📥 Status received from ${device.config.name}`);
 
@@ -781,10 +724,7 @@ export class DeviceManager {
         // This is important for DPS like 112 (litter_level) that may only come via push events
         if (device.lastData && device.lastData.dps) {
           const mergedDps = { ...device.lastData.dps, ...response.dps };
-          console.log(
-            `📦 Merged DPS (lastData + current):`,
-            Object.keys(mergedDps).join(", ")
-          );
+          console.log(`📦 Merged DPS (lastData + current):`, Object.keys(mergedDps).join(", "));
           response.dps = mergedDps;
         }
 
@@ -806,7 +746,7 @@ export class DeviceManager {
         lastError = error instanceof Error ? error : new Error(String(error));
         console.log(
           `⚠️ Status request attempt ${attempt}/${maxAttempts} failed for ${device.config.name}:`,
-          lastError.message
+          lastError.message,
         );
 
         this.forceDisconnect(deviceId);
@@ -818,7 +758,7 @@ export class DeviceManager {
     }
 
     throw new Error(
-      `Failed to get status from ${device.config.name} after ${maxAttempts} attempts: ${lastError?.message}`
+      `Failed to get status from ${device.config.name} after ${maxAttempts} attempts: ${lastError?.message}`,
     );
   }
 

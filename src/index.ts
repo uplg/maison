@@ -143,8 +143,7 @@ const app = new Elysia()
     return {
       message: "🐱 Cat API",
       version: "1.0.0",
-      description:
-        "Multi-device API for cat feeders, litter boxes, and fountains",
+      description: "Multi-device API for cat feeders, litter boxes, and fountains",
       endpoints: [
         "GET /",
         "POST /auth/login",
@@ -219,8 +218,7 @@ const app = new Elysia()
           set.status = 401;
           return {
             success: false,
-            error:
-              "Authentication required. Please provide a valid Bearer token.",
+            error: "Authentication required. Please provide a valid Bearer token.",
           };
         }
 

@@ -12,28 +12,18 @@ authors = [
 dependencies = [
     "numpy>=1.26.0",
     "pandas>=2.1.0",
-    "scikit-learn>=1.4.0",
-    "xgboost>=2.0.0",
-    "mlx>=0.21.0",
     "requests>=2.31.0",
     "python-dateutil>=2.8.0",
-    "joblib>=1.3.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
-    "black>=23.0.0",
-    "ruff>=0.1.0",
-]
-torch = [
-    "torch>=2.1.0",
 ]
 
 [project.scripts]
 tempo-train = "tempo_prediction.train:main"
-tempo-predict = "tempo_prediction.predict:main"
 tempo-backtest = "tempo_prediction.backtest:main"
 tempo-serve = "tempo_prediction.server:main"
 
@@ -43,11 +33,3 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tempo_prediction"]
-
-[tool.black]
-line-length = 100
-target-version = ["py311"]
-
-[tool.ruff]
-line-length = 100
-select = ["E", "F", "I", "W"]

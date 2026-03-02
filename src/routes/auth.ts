@@ -39,16 +39,14 @@ export function createAuthRoutes() {
         name: "jwt",
         secret: JWT_SECRET,
         exp: "7d",
-      })
+      }),
     )
     .post(
       "/login",
       async ({ body, jwt, set }) => {
         const { username, password } = body;
 
-        const user = USERS.find(
-          (u) => u.username === username && u.password === password
-        );
+        const user = USERS.find((u) => u.username === username && u.password === password);
 
         if (!user) {
           set.status = 401;
@@ -79,7 +77,7 @@ export function createAuthRoutes() {
           username: t.String({ minLength: 1 }),
           password: t.String({ minLength: 1 }),
         }),
-      }
+      },
     )
     .post("/verify", async ({ headers, jwt, set }) => {
       const authHeader = headers.authorization;

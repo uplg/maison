@@ -75,7 +75,7 @@ Concept: A custom "home assistant" without the overhead.
 
 - **Daily Color Display**: Shows today's and tomorrow's Tempo color (Blue/White/Red) from the [RTE public API](https://www.services-rte.com)
 - **Tariff Rates**: Current off-peak and peak prices for each color, fetched from [data.gouv.fr](https://tabular-api.data.gouv.fr)
-- **AI Predictions**: 7-day forecast powered by a Python ML server (XGBoost model trained on RTE consumption data, weather forecasts, and regulatory constraints)
+- **AI Predictions**: 7-day forecast powered by a Python prediction server (hybrid calibrated RTE algorithm using weather forecasts and regulatory constraints)
 - **Prediction Calendar**: Visual calendar showing past actual colors and upcoming predicted colors with confidence scores
 - **Regulatory Constraints**: Respects the 22 red-day and 43 white-day annual limits, weekend exclusions for red days, and seasonal rules (red only Nov-Mar)
 
@@ -391,7 +391,7 @@ The API includes comprehensive logging. Check the console output for:
 | Routing  | React Router v7                         |
 | Linting  | oxlint                                  |
 | Formatting | oxfmt                                 |
-| ML       | Python, XGBoost (Tempo predictions)     |
+| ML       | Python, Hybrid RTE Algorithm (Tempo predictions) |
 | Deploy   | Docker, nginx                           |
 ```
 

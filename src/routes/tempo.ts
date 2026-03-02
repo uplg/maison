@@ -60,8 +60,7 @@ const TARIFS_API_URL =
   "https://tabular-api.data.gouv.fr/api/resources/0c3d1d36-c412-4620-8566-e5cbb4fa2b5a/data/?page_size=1&P_SOUSCRITE__exact=6&__id__sort=desc";
 
 // Python ML prediction server
-const PREDICTION_SERVER_URL =
-  process.env.TEMPO_PREDICTION_URL || "http://127.0.0.1:3034";
+const PREDICTION_SERVER_URL = process.env.TEMPO_PREDICTION_URL || "http://127.0.0.1:3034";
 
 // Types for prediction responses
 interface TempoPrediction {
@@ -150,10 +149,7 @@ async function fetchTarifs(): Promise<TempoTarifs | null> {
     const tarifGouv = data.data[0];
 
     // Check if tariff is expired
-    if (
-      tarifGouv.DATE_FIN &&
-      tarifGouv.DATE_FIN < new Date().toISOString().slice(0, 10)
-    ) {
+    if (tarifGouv.DATE_FIN && tarifGouv.DATE_FIN < new Date().toISOString().slice(0, 10)) {
       console.error("❌ Tariff is expired");
       return tarifsCache;
     }
@@ -294,9 +290,7 @@ async function fetchTempoData(): Promise<TempoData> {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(
-      `Failed to fetch Tempo data: ${response.status} - ${error}`,
-    );
+    throw new Error(`Failed to fetch Tempo data: ${response.status} - ${error}`);
   }
 
   const data = (await response.json()) as RteTempoResponse;
@@ -316,16 +310,8 @@ async function fetchTempoData(): Promise<TempoData> {
   const tomorrowStr = parisFormatter.format(tomorrow);
 
   // Extract colors from the response
-  const todayColor = data.values?.[todayStr] as
-    | "BLUE"
-    | "WHITE"
-    | "RED"
-    | undefined;
-  const tomorrowColor = data.values?.[tomorrowStr] as
-    | "BLUE"
-    | "WHITE"
-    | "RED"
-    | undefined;
+  const todayColor = data.values?.[todayStr] as "BLUE" | "WHITE" | "RED" | undefined;
+  const tomorrowColor = data.values?.[tomorrowStr] as "BLUE" | "WHITE" | "RED" | undefined;
 
   // Fetch tariffs in parallel
   const tarifs = await fetchTarifs();
@@ -386,10 +372,7 @@ export function createTempoRoutes() {
             set.status = 503;
             return {
               success: false,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to fetch Tempo data",
+              error: error instanceof Error ? error.message : "Failed to fetch Tempo data",
               message: "Tempo service unavailable",
             };
           }
@@ -400,23 +383,13 @@ export function createTempoRoutes() {
             today: t.Optional(
               t.Object({
                 date: t.String(),
-                color: t.Union([
-                  t.Literal("BLUE"),
-                  t.Literal("WHITE"),
-                  t.Literal("RED"),
-                  t.Null(),
-                ]),
+                color: t.Union([t.Literal("BLUE"), t.Literal("WHITE"), t.Literal("RED"), t.Null()]),
               }),
             ),
             tomorrow: t.Optional(
               t.Object({
                 date: t.String(),
-                color: t.Union([
-                  t.Literal("BLUE"),
-                  t.Literal("WHITE"),
-                  t.Literal("RED"),
-                  t.Null(),
-                ]),
+                color: t.Union([t.Literal("BLUE"), t.Literal("WHITE"), t.Literal("RED"), t.Null()]),
               }),
             ),
             tarifs: t.Optional(
@@ -460,10 +433,7 @@ export function createTempoRoutes() {
             set.status = 503;
             return {
               success: false,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to refresh Tempo data",
+              error: error instanceof Error ? error.message : "Failed to refresh Tempo data",
               message: "Tempo service unavailable",
             };
           }
@@ -474,23 +444,13 @@ export function createTempoRoutes() {
             today: t.Optional(
               t.Object({
                 date: t.String(),
-                color: t.Union([
-                  t.Literal("BLUE"),
-                  t.Literal("WHITE"),
-                  t.Literal("RED"),
-                  t.Null(),
-                ]),
+                color: t.Union([t.Literal("BLUE"), t.Literal("WHITE"), t.Literal("RED"), t.Null()]),
               }),
             ),
             tomorrow: t.Optional(
               t.Object({
                 date: t.String(),
-                color: t.Union([
-                  t.Literal("BLUE"),
-                  t.Literal("WHITE"),
-                  t.Literal("RED"),
-                  t.Null(),
-                ]),
+                color: t.Union([t.Literal("BLUE"), t.Literal("WHITE"), t.Literal("RED"), t.Null()]),
               }),
             ),
             tarifs: t.Optional(
@@ -527,10 +487,7 @@ export function createTempoRoutes() {
             set.status = 503;
             return {
               success: false,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to fetch predictions",
+              error: error instanceof Error ? error.message : "Failed to fetch predictions",
               message: "Tempo prediction service unavailable",
             };
           }
@@ -593,10 +550,7 @@ export function createTempoRoutes() {
             set.status = 503;
             return {
               success: false,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to fetch state",
+              error: error instanceof Error ? error.message : "Failed to fetch state",
               message: "Tempo state service unavailable",
             };
           }
@@ -637,10 +591,7 @@ export function createTempoRoutes() {
             set.status = 503;
             return {
               success: false,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to fetch calendar",
+              error: error instanceof Error ? error.message : "Failed to fetch calendar",
               message: "Tempo calendar service unavailable",
             };
           }
@@ -673,10 +624,7 @@ export function createTempoRoutes() {
             set.status = 503;
             return {
               success: false,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to fetch history",
+              error: error instanceof Error ? error.message : "Failed to fetch history",
               message: "Tempo history service unavailable",
             };
           }
@@ -689,37 +637,26 @@ export function createTempoRoutes() {
       )
 
       // ⚙️ Get calibration info
-      .get(
-        "/calibration",
-        async ({ set }) => {
-          try {
-            const response = await fetch(
-              `${PREDICTION_SERVER_URL}/calibration`,
-              {
-                headers: { Accept: "application/json" },
-              },
-            );
+      .get("/calibration", async ({ set }) => {
+        try {
+          const response = await fetch(`${PREDICTION_SERVER_URL}/calibration`, {
+            headers: { Accept: "application/json" },
+          });
 
-            if (!response.ok) {
-              throw new Error(
-                `Calibration endpoint returned ${response.status}`,
-              );
-            }
-
-            return await response.json();
-          } catch (error) {
-            console.error("❌ Tempo calibration error:", error);
-            set.status = 503;
-            return {
-              success: false,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to fetch calibration",
-              message: "Tempo calibration service unavailable",
-            };
+          if (!response.ok) {
+            throw new Error(`Calibration endpoint returned ${response.status}`);
           }
-        },
-      )
+
+          return await response.json();
+        } catch (error) {
+          console.error("❌ Tempo calibration error:", error);
+          set.status = 503;
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : "Failed to fetch calibration",
+            message: "Tempo calibration service unavailable",
+          };
+        }
+      })
   );
 }

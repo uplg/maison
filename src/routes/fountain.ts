@@ -67,7 +67,7 @@ export function createFountainRoutes(deviceManager: DeviceManager) {
         },
         {
           response: FountainStatusResponseSchema,
-        }
+        },
       )
 
       // 💧 Reset Water Time (DPS 6)
@@ -115,7 +115,7 @@ export function createFountainRoutes(deviceManager: DeviceManager) {
         },
         {
           response: FountainResetResponseSchema,
-        }
+        },
       )
 
       // 💧 Reset Filter Life (DPS 7)
@@ -162,7 +162,7 @@ export function createFountainRoutes(deviceManager: DeviceManager) {
         },
         {
           response: FountainResetResponseSchema,
-        }
+        },
       )
 
       // 💧 Reset Pump Time (DPS 8)
@@ -209,7 +209,7 @@ export function createFountainRoutes(deviceManager: DeviceManager) {
         },
         {
           response: FountainResetResponseSchema,
-        }
+        },
       )
 
       // 💧 UV Settings (DPS 10: enable/disable, DPS 11: runtime)
@@ -240,15 +240,8 @@ export function createFountainRoutes(deviceManager: DeviceManager) {
 
             // UV Enable/Disable (DPS 10)
             if (body.enabled !== undefined) {
-              await deviceManager.sendCommand(
-                deviceId,
-                10,
-                body.enabled,
-                false
-              );
-              updates.push(
-                body.enabled ? "UV light enabled" : "UV light disabled"
-              );
+              await deviceManager.sendCommand(deviceId, 10, body.enabled, false);
+              updates.push(body.enabled ? "UV light enabled" : "UV light disabled");
             }
 
             // UV Runtime (DPS 11)
@@ -260,12 +253,7 @@ export function createFountainRoutes(deviceManager: DeviceManager) {
                   error: "UV runtime must be between 0 and 24 hours",
                 };
               }
-              await deviceManager.sendCommand(
-                deviceId,
-                11,
-                body.runtime,
-                false
-              );
+              await deviceManager.sendCommand(deviceId, 11, body.runtime, false);
               updates.push(`UV runtime set to ${body.runtime} hours`);
             }
 
@@ -274,9 +262,7 @@ export function createFountainRoutes(deviceManager: DeviceManager) {
 
             return {
               success: true,
-              message: `UV settings updated for ${
-                device.config.name
-              }: ${updates.join(", ")}`,
+              message: `UV settings updated for ${device.config.name}: ${updates.join(", ")}`,
               device: {
                 id: device.config.id,
                 name: device.config.name,
@@ -297,7 +283,7 @@ export function createFountainRoutes(deviceManager: DeviceManager) {
         {
           body: FountainUVSettingsSchema,
           response: FountainUVSettingsResponseSchema,
-        }
+        },
       )
 
       // 💧 Eco Mode Settings (DPS 102)
@@ -356,7 +342,7 @@ export function createFountainRoutes(deviceManager: DeviceManager) {
         {
           body: FountainEcoModeSchema,
           response: FountainEcoModeResponseSchema,
-        }
+        },
       )
 
       // 💧 Power/Light Control (DPS 1)
@@ -407,7 +393,7 @@ export function createFountainRoutes(deviceManager: DeviceManager) {
         {
           body: FountainPowerSchema,
           response: FountainPowerResponseSchema,
-        }
+        },
       )
   );
 }
