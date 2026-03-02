@@ -646,3 +646,80 @@ export const HueLampResponseSchema = t.Object({
   message: t.Optional(t.String()),
   error: t.Optional(t.String()),
 });
+
+// 🔌 Meross Smart Plug Schemas
+
+export const MerossToggleSchema = t.Object({
+  on: t.Boolean({
+    description: "Turn plug on (true) or off (false)",
+    default: true,
+  }),
+});
+
+export const MerossDNDModeSchema = t.Object({
+  enabled: t.Boolean({
+    description: "Enable DND mode (LED off) or disable (LED on)",
+    default: false,
+  }),
+});
+
+export const MerossProvisionKeySchema = t.Object({
+  key: t.String({
+    description: "Pre-shared signing key for the device",
+  }),
+  userId: t.String({
+    description: "User ID for MQTT authentication",
+    default: "1",
+  }),
+  mqttHost: t.Optional(
+    t.String({
+      description: "MQTT broker hostname",
+      default: "localhost",
+    }),
+  ),
+  mqttPort: t.Optional(
+    t.Number({
+      description: "MQTT broker port",
+      default: 8883,
+    }),
+  ),
+  deviceIp: t.Optional(
+    t.String({
+      description: "Device IP (default: 10.10.10.1 when on device AP)",
+      default: "10.10.10.1",
+    }),
+  ),
+});
+
+export const MerossProvisionWifiSchema = t.Object({
+  ssid: t.String({
+    description: "WiFi network SSID",
+  }),
+  password: t.String({
+    description: "WiFi network password",
+  }),
+  bssid: t.String({
+    description: "WiFi network BSSID (MAC address of AP)",
+  }),
+  channel: t.Number({
+    description: "WiFi channel number",
+  }),
+  encryption: t.Optional(
+    t.Number({
+      description: "WiFi encryption type (default: 6 = WPA2)",
+      default: 6,
+    }),
+  ),
+  cipher: t.Optional(
+    t.Number({
+      description: "WiFi cipher type (default: 3 = AES)",
+      default: 3,
+    }),
+  ),
+  deviceIp: t.Optional(
+    t.String({
+      description: "Device IP (default: 10.10.10.1 when on device AP)",
+      default: "10.10.10.1",
+    }),
+  ),
+});

@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { devicesApi, hueLampsApi, type Device } from '@/lib/api'
+import { devicesApi, hueLampsApi, merossApi, type Device } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from '@/hooks/use-toast'
 import { HueLampCard } from '@/components/devices/HueLampControl'
+import { MerossPlugCard } from '@/components/devices/MerossPlugControl'
 import { TempoCard } from '@/components/devices/TempoCard'
 import {
   Utensils,
@@ -25,6 +26,7 @@ import {
   Power,
   Loader2,
   Lightbulb,
+  Plug,
   Search,
 } from 'lucide-react'
 
@@ -201,6 +203,13 @@ export function DashboardPage() {
 
   // Check if Hue lamps are disabled (Docker mode)
   const isHueDisabled = hueLampsStats?.disabled === true
+
+  // Meross plugs query
+  const { data: merossPlugsData, isLoading: isLoadingMeross } = useQuery({
+    queryKey: ['meross-plugs'],
+    queryFn: merossApi.list,
+    refetchInterval: 5000,
+  })
 
   const connectAllMutation = useMutation({
     mutationFn: devicesApi.connectAll,
@@ -426,6 +435,46 @@ export function DashboardPage() {
         )}
       </div>
       )}
+
+      {/* Meross Smart Plugs Section */}
+      <div className="mt-8 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600">
+            <Plug className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold">{t('meross.title')}</h2>
+            <p className="text-sm text-muted-foreground">
+              {t('meross.subtitle')}
+            </p>
+          </div>
+        </div>
+
+        {isLoadingMeross ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <Skeleton className="h-40" />
+            <Skeleton className="h-40" />
+          </div>
+        ) : merossPlugsData?.devices && merossPlugsData.devices.length > 0 ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {merossPlugsData.devices.map((plug) => (
+              <MerossPlugCard key={plug.id} plug={plug} />
+            ))}
+          </div>
+        ) : (
+          <Card className="p-8 text-center">
+            <Plug className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
+            <p className="mt-4 text-muted-foreground">{t('meross.notFound')}</p>
+          </Card>
+        )}
+
+        {merossPlugsData?.devices && merossPlugsData.devices.length > 0 && (
+          <div className="text-center text-sm text-muted-foreground">
+            {t('meross.plugCount', { count: merossPlugsData.total })} • 
+            {t('meross.onlineCount', { count: merossPlugsData.devices.filter((d) => d.isOnline).length })}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

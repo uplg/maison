@@ -12,6 +12,8 @@ import { createFountainRoutes } from "./routes/fountain";
 import { createHueLampRoutes } from "./routes/hue-lamps";
 import { createAuthRoutes } from "./routes/auth";
 import { createTempoRoutes } from "./routes/tempo";
+import { createMerossRoutes } from "./routes/meross";
+import { MerossManager } from "./utils/MerossManager";
 
 dotenv.config();
 
@@ -46,6 +48,9 @@ process.on("unhandledRejection", (reason, promise) => {
 // 🔧 Device Manager Initialization
 const deviceManager = new DeviceManager();
 
+// 🔌 Meross Manager Initialization
+const merossManager = new MerossManager();
+
 // 💡 Hue Lamp Manager - will be initialized async
 let hueLampManager: IHueLampManager;
 
@@ -63,6 +68,10 @@ let hueLampManager: IHueLampManager;
   await hueLampManager.initialize();
   console.log("💡 Hue Lamp manager initialized");
 
+  // Initialize Meross smart plug manager
+  await merossManager.initialize();
+  console.log("🔌 Meross manager initialized");
+
   // Start the server after all initialization
   startServer();
 })();
@@ -72,6 +81,7 @@ const gracefulShutdown = async (signal: string) => {
   console.log(`\n📴 Received ${signal}. Shutting down gracefully...`);
   deviceManager.disconnectAllDevices();
   await hueLampManager.shutdown();
+  merossManager.shutdown();
   process.exit(0);
 };
 
@@ -109,6 +119,10 @@ const app = new Elysia()
           {
             name: "tempo",
             description: "RTE Tempo electricity pricing colors",
+          },
+          {
+            name: "meross",
+            description: "Meross MSS310 smart plug operations",
           },
         ],
         components: {
@@ -169,6 +183,20 @@ const app = new Elysia()
         "POST /hue-lamps/:lampId/rename",
         "GET /tempo",
         "POST /tempo/refresh",
+        "GET /meross",
+        "GET /meross/stats",
+        "GET /meross/:deviceId/status",
+        "POST /meross/:deviceId/toggle",
+        "POST /meross/:deviceId/on",
+        "POST /meross/:deviceId/off",
+        "GET /meross/:deviceId/electricity",
+        "GET /meross/:deviceId/consumption",
+        "GET /meross/:deviceId/abilities",
+        "GET /meross/:deviceId/debug",
+        "POST /meross/:deviceId/dnd",
+        "GET /meross/provision/wifi-scan",
+        "POST /meross/provision/key",
+        "POST /meross/provision/wifi",
       ],
     };
   })
@@ -223,7 +251,8 @@ const app = new Elysia()
         .use(createLitterBoxRoutes(deviceManager))
         .use(createFountainRoutes(deviceManager))
         .use(createHueLampRoutes(() => hueLampManager))
-        .use(createTempoRoutes()),
+        .use(createTempoRoutes())
+        .use(createMerossRoutes(merossManager)),
   );
 
 // 🚀 Server Configuration

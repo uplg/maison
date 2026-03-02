@@ -370,6 +370,121 @@ export const hueLampsApi = {
     }),
 };
 
+// Meross Smart Plug types
+export interface MerossPlug {
+  id: string;
+  name: string;
+  ip: string;
+  isOnline: boolean;
+  isOn: boolean;
+  lastPing: number;
+}
+
+export interface MerossPlugsResponse {
+  success: boolean;
+  devices: MerossPlug[];
+  total: number;
+  message: string;
+}
+
+export interface MerossPlugStatus {
+  online: boolean;
+  on: boolean;
+  electricity: {
+    voltage: number;
+    current: number;
+    power: number;
+  } | null;
+  hardware: {
+    type: string;
+    version: string;
+    chipType: string;
+    uuid: string;
+    mac: string;
+  } | null;
+  firmware: {
+    version: string;
+    compileTime: string;
+    innerIp: string;
+  } | null;
+  wifi: {
+    signal: number | null;
+  };
+  lastUpdate: number;
+}
+
+export interface MerossPlugStatusResponse {
+  success: boolean;
+  device: { id: string; name: string };
+  status: MerossPlugStatus;
+  message: string;
+}
+
+export interface MerossElectricityResponse {
+  success: boolean;
+  device: { id: string; name: string };
+  electricity: {
+    voltage: string;
+    current: string;
+    power: string;
+    raw: {
+      channel: number;
+      current: number;
+      voltage: number;
+      power: number;
+      config?: { voltageRatio: number; electricityRatio: number };
+    };
+  };
+  message: string;
+}
+
+export interface MerossToggleResponse {
+  success: boolean;
+  device: { id: string; name: string };
+  on: boolean;
+  message: string;
+}
+
+export interface MerossConsumptionResponse {
+  success: boolean;
+  device: { id: string; name: string };
+  consumption: Array<{ date: string; time: number; value: number }>;
+  summary: { days: number; totalWh: number; totalKwh: number };
+  message: string;
+}
+
+// Meross Smart Plugs API
+export const merossApi = {
+  list: () => api<MerossPlugsResponse>("/meross"),
+
+  status: (deviceId: string) =>
+    api<MerossPlugStatusResponse>(`/meross/${deviceId}/status`),
+
+  electricity: (deviceId: string) =>
+    api<MerossElectricityResponse>(`/meross/${deviceId}/electricity`),
+
+  toggle: (deviceId: string, on: boolean) =>
+    api<MerossToggleResponse>(`/meross/${deviceId}/toggle`, {
+      method: "POST",
+      body: { on },
+    }),
+
+  turnOn: (deviceId: string) =>
+    api<MerossToggleResponse>(`/meross/${deviceId}/on`, { method: "POST" }),
+
+  turnOff: (deviceId: string) =>
+    api<MerossToggleResponse>(`/meross/${deviceId}/off`, { method: "POST" }),
+
+  consumption: (deviceId: string) =>
+    api<MerossConsumptionResponse>(`/meross/${deviceId}/consumption`),
+
+  dnd: (deviceId: string, enabled: boolean) =>
+    api(`/meross/${deviceId}/dnd`, {
+      method: "POST",
+      body: { enabled },
+    }),
+};
+
 // Tempo types
 export interface TempoTarifs {
   blue: { hc: number; hp: number };

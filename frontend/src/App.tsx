@@ -4,6 +4,7 @@ import { LoginPage } from './pages/LoginPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { DevicePage } from './pages/DevicePage'
 import { HueLampPage } from './pages/HueLampPage'
+import { MerossPlugPage } from './pages/MerossPlugPage'
 import TempoPredictionPage from './pages/TempoPredictionPage'
 import { Layout } from './components/Layout'
 
@@ -40,6 +41,7 @@ export default function App() {
         <Route index element={<DashboardPage />} />
         <Route path="device/:deviceId" element={<DevicePage />} />
         <Route path="hue-lamp/:lampId" element={<HueLampPage />} />
+        <Route path="meross/:deviceId" element={<MerossPlugPage />} />
         <Route path="tempo-predictions" element={<TempoPredictionPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
