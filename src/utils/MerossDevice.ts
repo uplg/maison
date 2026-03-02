@@ -409,7 +409,7 @@ export class MerossDevice {
   static async configureKey(
     key: string,
     userId: string,
-    mqttHost: string = "192.168.1.165",
+    mqttHost: string = "localip",
     mqttPort: number = 8883,
     deviceIp: string = "10.10.10.1",
   ): Promise<void> {
