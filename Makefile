@@ -1,4 +1,4 @@
-.PHONY: help dev backend-local backend-stop docker-up docker-down docker-build logs
+.PHONY: help dev backend-local backend-stop docker-up docker-down docker-build logs stop
 
 # Colors
 GREEN  := $(shell tput -Txterm setaf 2)
@@ -112,6 +112,8 @@ clean: backend-stop tempo-stop ## Stop everything and clean up
 	@docker-compose -f docker-compose.hybrid.ssl.yml down 2>/dev/null || true
 	@rm -f .backend.pid .tempo.pid
 	@echo "$(GREEN)Cleaned up$(RESET)"
+
+stop: clean ## Stop all services (alias for clean)
 
 status: ## Show status of services
 	@echo "$(GREEN)=== Backend ===$(RESET)"

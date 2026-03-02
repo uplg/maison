@@ -10,12 +10,12 @@ This approach:
 """
 
 import json
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
-import pandas as pd
+import polars as pl
 import numpy as np
 
 from .algorithm import TempoAlgorithm, TempoState
@@ -30,6 +30,7 @@ from .constants import (
     get_tempo_year,
     is_in_red_period,
 )
+from .data_collector import TempoDataCollector, _parse_date_col
 from .data_collector import TempoDataCollector
 
 # Path for calibration parameters persistence
@@ -83,7 +84,9 @@ class CalibrationParams:
             "calibration_date": self.calibration_date,
             "calibration_accuracy": self.calibration_accuracy,
             "calibration_red_recall": self.calibration_red_recall,
-            "monthly_adjustments": {str(k): v for k, v in self.monthly_adjustments.items()},
+            "monthly_adjustments": {
+                str(k): v for k, v in self.monthly_adjustments.items()
+            },
         }
 
     @classmethod
@@ -115,7 +118,9 @@ class HybridTempoPredictor:
     renewable production), we can predict colors with high accuracy.
     """
 
-    def __init__(self, collector: Optional[TempoDataCollector] = None, auto_load: bool = True):
+    def __init__(
+        self, collector: Optional[TempoDataCollector] = None, auto_load: bool = True
+    ):
         self.collector = collector or TempoDataCollector()
         self.algorithm = TempoAlgorithm()
         self.params = CalibrationParams()
@@ -166,23 +171,28 @@ class HybridTempoPredictor:
 
         # Fetch all historical data
         tempo_df = self.collector.fetch_tempo_history_all_seasons(start_year)
-        if tempo_df.empty:
+        if tempo_df.is_empty():
             print("No historical data available")
             return {}
 
-        tempo_df["date"] = pd.to_datetime(tempo_df["date"])
-        start_date = tempo_df["date"].min().date()
-        end_date = tempo_df["date"].max().date()
+        # Ensure date column is Date type
+        if tempo_df.schema["date"] != pl.Date:
+            tempo_df = _parse_date_col(tempo_df)
+
+        start_date = tempo_df["date"].min()
+        end_date = tempo_df["date"].max()
 
         # Fetch temperature in chunks (Open-Meteo has date range limits)
         print("Fetching temperature data in chunks...")
-        all_temps = []
+        all_temps: list[pl.DataFrame] = []
         current_start = start_date
 
         while current_start < end_date:
             current_end = min(current_start + timedelta(days=365), end_date)
-            chunk_df = self.collector.fetch_temperature_history(current_start, current_end)
-            if not chunk_df.empty:
+            chunk_df = self.collector.fetch_temperature_history(
+                current_start, current_end
+            )
+            if not chunk_df.is_empty():
                 all_temps.append(chunk_df)
             current_start = current_end + timedelta(days=1)
 
@@ -190,17 +200,22 @@ class HybridTempoPredictor:
             print("No temperature data available")
             return {}
 
-        temp_df = pd.concat(all_temps, ignore_index=True)
-        temp_df = temp_df.drop_duplicates(subset=["date"])
-        temp_df["date"] = pd.to_datetime(temp_df["date"])
+        temp_df = pl.concat(all_temps)
+        temp_df = temp_df.unique(subset=["date"])
+        # Ensure date column is Date type
+        if temp_df.schema["date"] != pl.Date:
+            temp_df = _parse_date_col(temp_df)
 
         print(f"Got {len(temp_df)} temperature records")
 
         # Merge
-        df = tempo_df.merge(temp_df, on="date", how="left")
-        df = df.dropna(subset=["temperature_mean", "color"])
+        df = tempo_df.join(temp_df, on="date", how="left")
+        df = df.drop_nulls(subset=["temperature_mean", "color"])
 
         print(f"Calibrating on {len(df)} samples...")
+
+        # Convert to rows for iteration-based evaluation
+        rows = df.select("date", "color", "temperature_mean").to_dicts()
 
         # Grid search for best thermosensitivity
         best_score = 0
@@ -211,10 +226,11 @@ class HybridTempoPredictor:
 
         for thermo in range(600, 1800, 25):
             self.params.thermosensitivity = thermo
-            accuracy, red_recall, red_precision, red_predicted = self._evaluate_on_history(df)
+            accuracy, red_recall, red_precision, red_predicted = self._evaluate_on_rows(
+                rows
+            )
 
             # Use F1-score for RED class as main metric
-            # This balances recall (don't miss RED) with precision (don't cry wolf)
             if red_recall + red_precision > 0:
                 red_f1 = 2 * red_recall * red_precision / (red_recall + red_precision)
             else:
@@ -259,8 +275,11 @@ class HybridTempoPredictor:
             "red_precision": best_red_precision,
         }
 
-    def _evaluate_on_history(self, df: pd.DataFrame) -> tuple[float, float, float, int]:
-        """Evaluate current parameters on historical data.
+    def _evaluate_on_rows(self, rows: list[dict]) -> tuple[float, float, float, int]:
+        """Evaluate current parameters on historical data rows.
+
+        Args:
+            rows: List of dicts with keys: date, color, temperature_mean
 
         Returns:
             Tuple of (accuracy, red_recall, red_precision, red_predicted_count)
@@ -272,15 +291,19 @@ class HybridTempoPredictor:
         red_predicted = 0
 
         # Group by season
-        df = df.copy()
-        df["season"] = df["date"].apply(lambda d: get_tempo_year(d.date()))
+        seasons: dict[tuple[int, int], list[dict]] = {}
+        for row in rows:
+            d = row["date"]
+            season = get_tempo_year(d)
+            seasons.setdefault(season, []).append(row)
 
-        for season, season_df in df.groupby("season"):
-            season_df = season_df.sort_values("date")
+        for season_key, season_rows in seasons.items():
+            # Sort by date
+            season_rows.sort(key=lambda r: r["date"])
             state = TempoState()
 
-            for _, row in season_df.iterrows():
-                d = row["date"].date() if hasattr(row["date"], "date") else row["date"]
+            for row in season_rows:
+                d = row["date"]
                 temp = row["temperature_mean"]
                 actual_color = row["color"]
 
@@ -291,7 +314,9 @@ class HybridTempoPredictor:
                 normalized = self.algorithm.normalize_consumption(consumption)
 
                 # Predict
-                predicted_color, new_state = self.algorithm.determine_color(d, normalized, state)
+                predicted_color, new_state = self.algorithm.determine_color(
+                    d, normalized, state
+                )
 
                 # Track accuracy
                 if predicted_color == actual_color:
@@ -338,7 +363,9 @@ class HybridTempoPredictor:
         base = self.params.base_consumption
 
         # Temperature effect (heating demand)
-        temp_effect = (self.params.temp_reference - temperature) * self.params.thermosensitivity
+        temp_effect = (
+            self.params.temp_reference - temperature
+        ) * self.params.thermosensitivity
 
         # Weekend factor
         if d.weekday() >= 5:
@@ -391,8 +418,16 @@ class HybridTempoPredictor:
 
         for i, (d, temp) in enumerate(zip(dates, temperatures)):
             # Get renewable data if available
-            wind = wind_production[i] if wind_production and i < len(wind_production) else None
-            solar = solar_production[i] if solar_production and i < len(solar_production) else None
+            wind = (
+                wind_production[i]
+                if wind_production and i < len(wind_production)
+                else None
+            )
+            solar = (
+                solar_production[i]
+                if solar_production and i < len(solar_production)
+                else None
+            )
 
             # Estimate consumption
             consumption = self._estimate_consumption(temp, d, wind, solar)
@@ -400,7 +435,9 @@ class HybridTempoPredictor:
 
             # Get thresholds
             tempo_day = get_tempo_day_number(d)
-            threshold_red = self.algorithm.calculate_threshold_red(tempo_day, state.stock_red)
+            threshold_red = self.algorithm.calculate_threshold_red(
+                tempo_day, state.stock_red
+            )
             threshold_white = self.algorithm.calculate_threshold_white_red(
                 tempo_day, state.stock_red, state.stock_white
             )
@@ -489,24 +526,21 @@ class HybridTempoPredictor:
         # Fetch weather forecast
         weather_df = self.collector.fetch_temperature_forecast(days=7)
 
-        if weather_df.empty:
+        if weather_df.is_empty():
             print("Warning: No weather forecast available")
             return []
 
-        # Extract dates and temperatures - ensure dates are date objects
-        dates = []
-        for d in weather_df["date"]:
+        # Extract dates and temperatures
+        dates: list[date] = []
+        for d in weather_df["date"].to_list():
             if isinstance(d, str):
-                # Handle ISO format with or without time
                 dates.append(date.fromisoformat(d[:10]))
-            elif hasattr(d, "date") and callable(getattr(d, "date")):
-                dates.append(d.date())
             elif isinstance(d, date):
                 dates.append(d)
             else:
                 dates.append(date.fromisoformat(str(d)[:10]))
 
-        temperatures = weather_df["temperature_mean"].tolist()
+        temperatures = weather_df["temperature_mean"].to_list()
 
         return self.predict(dates, temperatures, stock_red, stock_white)
 
@@ -524,11 +558,15 @@ class HybridTempoPredictor:
         history = self.collector.fetch_tempo_history(test_season)
         temp_df = self.collector.fetch_temperature_history(season_start, season_end)
 
-        if not history or temp_df.empty:
+        if not history or temp_df.is_empty():
             return {"error": "Missing data"}
 
-        temp_df["date"] = pd.to_datetime(temp_df["date"]).dt.date
-        temp_dict = dict(zip(temp_df["date"], temp_df["temperature_mean"]))
+        # Build temperature lookup dict
+        temp_dict: dict[date, float] = {}
+        for row in temp_df.iter_rows(named=True):
+            d = row["date"]
+            if isinstance(d, date):
+                temp_dict[d] = row["temperature_mean"]
 
         # Initialize state
         state = TempoState()
@@ -560,7 +598,9 @@ class HybridTempoPredictor:
             # Predict
             consumption = self._estimate_consumption(temp, current)
             normalized = self.algorithm.normalize_consumption(consumption)
-            predicted_color, _ = self.algorithm.determine_color(current, normalized, state)
+            predicted_color, _ = self.algorithm.determine_color(
+                current, normalized, state
+            )
 
             # Record
             confusion[actual_color][predicted_color] += 1
@@ -591,16 +631,21 @@ class HybridTempoPredictor:
         accuracy = correct / total if total > 0 else 0
 
         red_predicted = (
-            confusion["BLUE"]["RED"] + confusion["WHITE"]["RED"] + confusion["RED"]["RED"]
+            confusion["BLUE"]["RED"]
+            + confusion["WHITE"]["RED"]
+            + confusion["RED"]["RED"]
         )
-        red_actual = confusion["RED"]["BLUE"] + confusion["RED"]["WHITE"] + confusion["RED"]["RED"]
+        red_actual = (
+            confusion["RED"]["BLUE"]
+            + confusion["RED"]["WHITE"]
+            + confusion["RED"]["RED"]
+        )
         red_correct = confusion["RED"]["RED"]
 
         white_predicted = (
-            confusion["BLUE"]["WHITE"] + confusion["WHITE"]["WHITE"] + confusion["RED"]["WHITE"]
-        )
-        white_actual = (
-            confusion["BLUE"]["WHITE"] + confusion["WHITE"]["WHITE"] + confusion["RED"]["WHITE"]
+            confusion["BLUE"]["WHITE"]
+            + confusion["WHITE"]["WHITE"]
+            + confusion["RED"]["WHITE"]
         )
         white_correct = confusion["WHITE"]["WHITE"]
 
@@ -614,9 +659,13 @@ class HybridTempoPredictor:
 
         white_precision = white_correct / white_predicted if white_predicted > 0 else 0
         white_actual_count = (
-            confusion["WHITE"]["BLUE"] + confusion["WHITE"]["WHITE"] + confusion["WHITE"]["RED"]
+            confusion["WHITE"]["BLUE"]
+            + confusion["WHITE"]["WHITE"]
+            + confusion["WHITE"]["RED"]
         )
-        white_recall = white_correct / white_actual_count if white_actual_count > 0 else 0
+        white_recall = (
+            white_correct / white_actual_count if white_actual_count > 0 else 0
+        )
         white_f1 = (
             2 * white_precision * white_recall / (white_precision + white_recall)
             if (white_precision + white_recall) > 0
@@ -669,7 +718,9 @@ class HybridTempoPredictor:
                 "total_days": total_days,
                 "total_correct": total_correct,
                 "overall_accuracy": total_correct / total_days if total_days > 0 else 0,
-                "avg_red_recall": total_red_recall / total_days if total_days > 0 else 0,
+                "avg_red_recall": total_red_recall / total_days
+                if total_days > 0
+                else 0,
             },
         }
 
@@ -760,7 +811,9 @@ def main():
             continue
 
         print(f"\n{season}:")
-        print(f"  Accuracy: {results['accuracy']:.1%} ({results['correct']}/{results['total']})")
+        print(
+            f"  Accuracy: {results['accuracy']:.1%} ({results['correct']}/{results['total']})"
+        )
         print(
             f"  RED: P={results['red_metrics']['precision']:.1%} R={results['red_metrics']['recall']:.1%} F1={results['red_metrics']['f1']:.2f}"
         )
