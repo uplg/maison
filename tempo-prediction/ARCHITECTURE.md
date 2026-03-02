@@ -4,7 +4,7 @@
 
 The Tempo prediction system forecasts EDF Tempo electricity pricing colors (BLUE, WHITE, RED) using a **hybrid approach** that combines the official RTE algorithm with machine learning-based confidence estimation.
 
-The system achieves **100% RED day recall** and high overall accuracy by implementing the exact RTE algorithm with calibrated temperature-to-consumption estimation.
+The system achieves high overall accuracy by implementing the exact RTE algorithm with calibrated temperature-to-consumption estimation.
 
 ## System Architecture
 
@@ -256,28 +256,6 @@ The predictor is calibrated using grid search over historical data (2015-present
 - **URL**: `odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-national-tr/records`
 - Real-time/historical production data
 - Used for wind/solar production (optional enhancement)
-
-## File Structure
-
-```
-tempo-prediction/
-├── tempo_prediction/
-│   ├── __init__.py
-│   ├── algorithm.py          # RTE algorithm implementation
-│   ├── constants.py          # Thresholds, stocks, periods
-│   ├── data_collector.py     # API clients for data sources
-│   ├── hybrid_predictor.py   # Main predictor (calibrated RTE)
-│   ├── train.py              # Calibration CLI
-│   ├── backtest.py           # Backtesting CLI
-│   └── server.py             # HTTP API server
-├── cache/
-│   ├── calibration_params.json  # Persisted calibration
-│   └── tempo_*.json            # Cached Tempo history
-├── pyproject.toml            # Project config + pixi tasks
-├── pixi.lock                 # Locked dependencies
-├── README.md                 # Usage instructions
-└── ARCHITECTURE.md           # This file
-```
 
 ## Running the System
 
