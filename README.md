@@ -10,7 +10,7 @@ Concept: A custom "home assistant" without the overhead.
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square)
 
-![Home Monitor](./screenshots/home-monitor.png)
+![Home Monitor](./screenshots/full-screenshot.png)
 
 ## Features
 
