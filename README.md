@@ -274,30 +274,6 @@ make hybrid   # Starts local backend + Docker frontend
 
 ```bash
 make help              # Show all commands
-
-# Development
-make dev               # Start backend + frontend in dev mode
-make backend-local     # Start backend only (background)
-make backend-stop      # Stop local backend
-make backend-logs      # Tail backend logs
-
-# Docker
-make docker-up         # Start Docker mode
-make docker-down       # Stop Docker
-make docker-build      # Build Docker images
-
-# Hybrid (Bluetooth support)
-make hybrid            # Local backend + Docker frontend
-
-# PWA & SSL (mobile app access)
-make ssl-setup         # Generate SSL certs + PWA icons
-make ssl-up            # Start with HTTPS (Docker)
-make ssl-down          # Stop SSL containers
-make hybrid-ssl        # Hybrid mode with SSL
-
-# Cleanup
-make clean             # Stop everything
-make status            # Show services status
 ```
 
 ### PWA / Mobile Access
