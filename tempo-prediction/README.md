@@ -57,7 +57,7 @@ All commands are run via `pixi run` from the `tempo-prediction/` directory.
 pixi run serve
 ```
 
-Starts the HTTP prediction server on `http://127.0.0.1:3034`. The main cat-monitor backend proxies requests to this server.
+Starts the HTTP prediction server on `http://127.0.0.1:3034`. The main home-monitor backend proxies requests to this server.
 
 ### Calibrate the predictor
 
@@ -119,4 +119,4 @@ Key files:
 
 ## API
 
-The prediction server exposes a simple HTTP API that the main cat-monitor backend can call. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full endpoint reference and response formats.
+The prediction server exposes a simple HTTP API that the main home-monitor backend can call. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full endpoint reference and response formats.
