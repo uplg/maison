@@ -72,6 +72,10 @@ logs/
 
 scripts/ssl/*
 
+mosquitto/certs/
+mosquitto/data/
+mosquitto/log/
+
 *.pyc
 __pycache__
 tempo-prediction/cache

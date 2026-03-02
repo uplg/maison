@@ -1,4 +1,4 @@
-.PHONY: help dev backend-local backend-stop docker-up docker-down docker-build logs stop
+.PHONY: help dev backend-local backend-stop docker-up docker-down docker-build logs stop mqtt-certs mqtt-up mqtt-down
 
 # Colors
 GREEN  := $(shell tput -Txterm setaf 2)
@@ -86,10 +86,11 @@ docker-logs: ## Tail Docker logs
 # Hybrid Mode (recommended for Bluetooth)
 # =====================
 
-hybrid: backend-local tempo-start docker-frontend-hybrid ## Start local backend + Tempo + Docker frontend (for Bluetooth support)
+hybrid: mqtt-certs backend-local tempo-start docker-frontend-hybrid ## Start local backend + Tempo + Docker frontend + MQTT (for Bluetooth support)
 	@echo "$(GREEN)Hybrid mode started:$(RESET)"
 	@echo "  - Backend: localhost:$(API_PORT) (with Bluetooth)"
 	@echo "  - Tempo:   localhost:3034 (prediction server)"
+	@echo "  - MQTT:    localhost:8883 (Meross smart plugs)"
 	@echo "  - Frontend: localhost:80 (Docker)"
 
 docker-frontend-hybrid: ## Start only the frontend in Docker (pointing to local backend)
@@ -99,6 +100,26 @@ docker-frontend-hybrid: ## Start only the frontend in Docker (pointing to local 
 docker-frontend: ## Start only the frontend in Docker
 	@echo "$(GREEN)Starting frontend container only...$(RESET)"
 	docker-compose up -d frontend
+
+# =====================
+# MQTT Broker (for Meross smart plugs)
+# =====================
+
+mqtt-certs: ## Generate TLS certificates for the MQTT broker
+	@echo "$(GREEN)Generating MQTT TLS certificates...$(RESET)"
+	@chmod +x scripts/generate-mqtt-certs.sh
+	@./scripts/generate-mqtt-certs.sh
+
+mqtt-up: mqtt-certs ## Start the MQTT broker (standalone, via Docker)
+	@echo "$(GREEN)Starting MQTT broker...$(RESET)"
+	docker-compose -f docker-compose.hybrid.yml up -d mqtt
+	@echo "$(GREEN)MQTT broker running on port 8883 (TLS)$(RESET)"
+
+mqtt-down: ## Stop the MQTT broker
+	@echo "$(GREEN)Stopping MQTT broker...$(RESET)"
+	@docker stop home-monitor-mqtt 2>/dev/null || true
+	@docker rm home-monitor-mqtt 2>/dev/null || true
+	@echo "$(GREEN)MQTT broker stopped$(RESET)"
 
 # =====================
 # Utilities
@@ -199,10 +220,11 @@ ssl-down: ## Stop SSL containers
 ssl-logs: ## Tail SSL Docker logs
 	docker-compose -f docker-compose.ssl.yml logs -f
 
-hybrid-ssl: backend-local tempo-start docker-frontend-hybrid-ssl ## Hybrid mode with SSL (Bluetooth + PWA + Tempo)
+hybrid-ssl: mqtt-certs backend-local tempo-start docker-frontend-hybrid-ssl ## Hybrid mode with SSL (Bluetooth + PWA + Tempo + MQTT)
 	@echo "$(GREEN)Hybrid SSL mode started:$(RESET)"
 	@echo "  - Backend: localhost:$(API_PORT) (with Bluetooth)"
 	@echo "  - Tempo:   localhost:3034 (prediction server)"
+	@echo "  - MQTT:    localhost:8883 (Meross smart plugs)"
 	@echo "  - Frontend: https://localhost (Docker with SSL)"
 
 docker-frontend-hybrid-ssl: ## Start frontend with SSL in Docker (hybrid mode)

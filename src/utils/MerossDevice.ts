@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 // ─── Meross MSS310 Local HTTP Client ───
 // Protocol reverse-engineered from https://github.com/arandall/meross
 // Communicates directly with the device via HTTP at http://<ip>/config
-// No cloud, no MQTT broker needed.
+// No cloud needed. Requires a local MQTT broker (Mosquitto) for device boot handshake.
 
 export interface MerossDeviceConfig {
   name: string;
@@ -409,7 +409,7 @@ export class MerossDevice {
   static async configureKey(
     key: string,
     userId: string,
-    mqttHost: string = "localhost",
+    mqttHost: string = "192.168.1.165",
     mqttPort: number = 8883,
     deviceIp: string = "10.10.10.1",
   ): Promise<void> {
