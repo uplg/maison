@@ -48,7 +48,9 @@ TEMP_QUANTILE_30_MEAN = 8.3042  # °C
 
 # API URLs
 RTE_TEMPO_API = "https://www.services-rte.com/cms/open_data/v1/tempo"
-RTE_ECO2MIX_API = "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-national-tr/records"
+RTE_ECO2MIX_API = (
+    "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-national-tr/records"
+)
 OPEN_METEO_API = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_HISTORICAL_API = "https://archive-api.open-meteo.com/v1/archive"
 
@@ -65,14 +67,13 @@ def get_tempo_year(d: date) -> tuple[int, int]:
     """
     Get the Tempo year for a given date.
     Tempo year runs from September 1 to August 31.
-    
+
     Returns:
         Tuple of (start_year, end_year) e.g., (2024, 2025)
     """
     if d.month >= TEMPO_YEAR_START_MONTH:
         return (d.year, d.year + 1)
-    else:
-        return (d.year - 1, d.year)
+    return (d.year - 1, d.year)
 
 
 def get_tempo_day_number(d: date) -> int:
@@ -104,7 +105,7 @@ def is_sunday(d: date) -> bool:
 def can_be_red(d: date, consecutive_red_count: int = 0) -> bool:
     """
     Check if a date can be marked as red.
-    
+
     Constraints:
     - Must be in red period (Nov 1 - Mar 31)
     - Cannot be weekend
@@ -114,15 +115,13 @@ def can_be_red(d: date, consecutive_red_count: int = 0) -> bool:
         return False
     if is_weekend(d):
         return False
-    if consecutive_red_count >= MAX_CONSECUTIVE_RED_DAYS:
-        return False
-    return True
+    return not consecutive_red_count >= MAX_CONSECUTIVE_RED_DAYS
 
 
 def can_be_white(d: date) -> bool:
     """
     Check if a date can be marked as white.
-    
+
     Constraints:
     - Cannot be Sunday
     """

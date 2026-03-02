@@ -7,4 +7,4 @@ from .data_collector import TempoDataCollector
 from .hybrid_predictor import HybridTempoPredictor
 
 __version__ = "1.0.0"
-__all__ = ["TempoAlgorithm", "TempoDataCollector", "HybridTempoPredictor"]
+__all__ = ["HybridTempoPredictor", "TempoAlgorithm", "TempoDataCollector"]

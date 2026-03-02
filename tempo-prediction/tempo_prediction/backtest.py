@@ -60,16 +60,14 @@ def _print_season_results(season: str, results: dict):
 
     print(f"\n{season}:")
     print(f"  Accuracy: {results['accuracy']:.1%} ({results['correct']}/{results['total']})")
-    print(
-        f"  RED: P={results['red_metrics']['precision']:.1%} R={results['red_metrics']['recall']:.1%} F1={results['red_metrics']['f1']:.2f}"
-    )
-    print(
-        f"  WHITE: P={results['white_metrics']['precision']:.1%} R={results['white_metrics']['recall']:.1%} F1={results['white_metrics']['f1']:.2f}"
-    )
+    red = results["red_metrics"]
+    print(f"  RED: P={red['precision']:.1%} R={red['recall']:.1%} F1={red['f1']:.2f}")
+    white = results["white_metrics"]
+    print(f"  WHITE: P={white['precision']:.1%} R={white['recall']:.1%} F1={white['f1']:.2f}")
 
-    print(f"\n  Confusion Matrix:")
+    print("\n  Confusion Matrix:")
     confusion = results["confusion"]
-    print(f"             BLUE   WHITE    RED  (Predicted)")
+    print("             BLUE   WHITE    RED  (Predicted)")
     for actual in ["BLUE", "WHITE", "RED"]:
         row = f"    {actual:>5}"
         for pred in ["BLUE", "WHITE", "RED"]:

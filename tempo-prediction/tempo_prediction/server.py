@@ -5,22 +5,19 @@ Uses the Hybrid predictor (calibrated RTE algorithm).
 """
 
 import json
-import os
 from datetime import date, timedelta
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
-import threading
-from typing import Optional
 
+from .constants import STOCK_RED_DAYS, STOCK_WHITE_DAYS, get_tempo_year
 from .data_collector import TempoDataCollector
-from .constants import get_tempo_year, STOCK_RED_DAYS, STOCK_WHITE_DAYS
 from .hybrid_predictor import HybridTempoPredictor
 
 
 class TempoPredictionHandler(BaseHTTPRequestHandler):
     """HTTP request handler for Tempo predictions."""
 
-    hybrid_predictor: Optional[HybridTempoPredictor] = None
+    hybrid_predictor: HybridTempoPredictor | None = None
     collector: TempoDataCollector = None
 
     def _send_json(self, data: dict, status: int = 200):
@@ -212,10 +209,7 @@ class TempoPredictionHandler(BaseHTTPRequestHandler):
         from .algorithm import TempoAlgorithm
 
         date_str = query.get("date", [None])[0]
-        if date_str:
-            target_date = date.fromisoformat(date_str)
-        else:
-            target_date = date.today()
+        target_date = date.fromisoformat(date_str) if date_str else date.today()
 
         algo = TempoAlgorithm()
         state = self.hybrid_predictor.estimate_current_state()
@@ -371,9 +365,8 @@ class TempoPredictionHandler(BaseHTTPRequestHandler):
             }
         )
 
-    def log_message(self, format, *args):
+    def log_message(self, format, *args):  # noqa: A002
         """Suppress default logging."""
-        pass
 
 
 def create_server(host: str = "127.0.0.1", port: int = 3034) -> HTTPServer:

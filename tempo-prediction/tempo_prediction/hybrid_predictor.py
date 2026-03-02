@@ -13,17 +13,15 @@ import json
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Optional
 
-import polars as pl
 import numpy as np
+import polars as pl
 
 from .algorithm import TempoAlgorithm, TempoState
 from .constants import (
     CACHE_DIR,
     STOCK_RED_DAYS,
     STOCK_WHITE_DAYS,
-    TempoColor,
     can_be_red,
     can_be_white,
     get_tempo_day_number,
@@ -31,7 +29,6 @@ from .constants import (
     is_in_red_period,
 )
 from .data_collector import TempoDataCollector, _parse_date_col
-from .data_collector import TempoDataCollector
 
 # Path for calibration parameters persistence
 CALIBRATION_FILE = Path(CACHE_DIR) / "calibration_params.json"
@@ -50,7 +47,7 @@ class CalibrationParams:
     renewable_factor: float = 0.12  # How much renewables reduce effective consumption
 
     # Calibration metadata
-    calibration_date: Optional[str] = None
+    calibration_date: str | None = None
     calibration_accuracy: float = 0.0
     calibration_red_recall: float = 0.0
 
@@ -84,9 +81,7 @@ class CalibrationParams:
             "calibration_date": self.calibration_date,
             "calibration_accuracy": self.calibration_accuracy,
             "calibration_red_recall": self.calibration_red_recall,
-            "monthly_adjustments": {
-                str(k): v for k, v in self.monthly_adjustments.items()
-            },
+            "monthly_adjustments": {str(k): v for k, v in self.monthly_adjustments.items()},
         }
 
     @classmethod
@@ -118,9 +113,7 @@ class HybridTempoPredictor:
     renewable production), we can predict colors with high accuracy.
     """
 
-    def __init__(
-        self, collector: Optional[TempoDataCollector] = None, auto_load: bool = True
-    ):
+    def __init__(self, collector: TempoDataCollector | None = None, auto_load: bool = True):
         self.collector = collector or TempoDataCollector()
         self.algorithm = TempoAlgorithm()
         self.params = CalibrationParams()
@@ -134,7 +127,7 @@ class HybridTempoPredictor:
         """Save calibration parameters to disk."""
         try:
             CALIBRATION_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(CALIBRATION_FILE, "w") as f:
+            with CALIBRATION_FILE.open("w") as f:
                 json.dump(self.params.to_dict(), f, indent=2)
             print(f"Calibration saved to {CALIBRATION_FILE}")
             return True
@@ -148,7 +141,7 @@ class HybridTempoPredictor:
             return False
 
         try:
-            with open(CALIBRATION_FILE, "r") as f:
+            with CALIBRATION_FILE.open() as f:
                 data = json.load(f)
             self.params = CalibrationParams.from_dict(data)
             self._calibrated = True
@@ -189,9 +182,7 @@ class HybridTempoPredictor:
 
         while current_start < end_date:
             current_end = min(current_start + timedelta(days=365), end_date)
-            chunk_df = self.collector.fetch_temperature_history(
-                current_start, current_end
-            )
+            chunk_df = self.collector.fetch_temperature_history(current_start, current_end)
             if not chunk_df.is_empty():
                 all_temps.append(chunk_df)
             current_start = current_end + timedelta(days=1)
@@ -226,9 +217,7 @@ class HybridTempoPredictor:
 
         for thermo in range(600, 1800, 25):
             self.params.thermosensitivity = thermo
-            accuracy, red_recall, red_precision, red_predicted = self._evaluate_on_rows(
-                rows
-            )
+            accuracy, red_recall, red_precision, red_predicted = self._evaluate_on_rows(rows)
 
             # Use F1-score for RED class as main metric
             if red_recall + red_precision > 0:
@@ -249,7 +238,9 @@ class HybridTempoPredictor:
             # Debug output for interesting values
             if thermo % 100 == 0:
                 print(
-                    f"  thermo={thermo}: acc={accuracy:.1%}, RED P={red_precision:.1%} R={red_recall:.1%} F1={red_f1:.2f}, predicted={red_predicted}"
+                    f"  thermo={thermo}: acc={accuracy:.1%},"
+                    f" RED P={red_precision:.1%} R={red_recall:.1%}"
+                    f" F1={red_f1:.2f}, predicted={red_predicted}"
                 )
 
         self.params.thermosensitivity = best_thermo
@@ -258,7 +249,7 @@ class HybridTempoPredictor:
         self.params.calibration_red_recall = best_red_recall
         self._calibrated = True
 
-        print(f"\nCalibration complete:")
+        print("\nCalibration complete:")
         print(f"  Best thermosensitivity: {best_thermo} MW/C")
         print(f"  Overall accuracy: {best_accuracy:.1%}")
         print(f"  RED recall: {best_red_recall:.1%}")
@@ -297,7 +288,7 @@ class HybridTempoPredictor:
             season = get_tempo_year(d)
             seasons.setdefault(season, []).append(row)
 
-        for season_key, season_rows in seasons.items():
+        for _season_key, season_rows in seasons.items():
             # Sort by date
             season_rows.sort(key=lambda r: r["date"])
             state = TempoState()
@@ -314,9 +305,7 @@ class HybridTempoPredictor:
                 normalized = self.algorithm.normalize_consumption(consumption)
 
                 # Predict
-                predicted_color, new_state = self.algorithm.determine_color(
-                    d, normalized, state
-                )
+                predicted_color, _new_state = self.algorithm.determine_color(d, normalized, state)
 
                 # Track accuracy
                 if predicted_color == actual_color:
@@ -351,8 +340,8 @@ class HybridTempoPredictor:
         self,
         temperature: float,
         d: date,
-        wind_production: Optional[float] = None,
-        solar_production: Optional[float] = None,
+        wind_production: float | None = None,
+        solar_production: float | None = None,
     ) -> float:
         """
         Estimate consumption from temperature using calibrated parameters.
@@ -363,15 +352,10 @@ class HybridTempoPredictor:
         base = self.params.base_consumption
 
         # Temperature effect (heating demand)
-        temp_effect = (
-            self.params.temp_reference - temperature
-        ) * self.params.thermosensitivity
+        temp_effect = (self.params.temp_reference - temperature) * self.params.thermosensitivity
 
         # Weekend factor
-        if d.weekday() >= 5:
-            weekend_factor = self.params.weekend_factor
-        else:
-            weekend_factor = 1.0
+        weekend_factor = self.params.weekend_factor if d.weekday() >= 5 else 1.0
 
         # Monthly adjustment
         monthly_factor = self.params.monthly_adjustments.get(d.month, 1.0)
@@ -396,8 +380,8 @@ class HybridTempoPredictor:
         temperatures: list[float],
         stock_red: int = STOCK_RED_DAYS,
         stock_white: int = STOCK_WHITE_DAYS,
-        wind_production: Optional[list[float]] = None,
-        solar_production: Optional[list[float]] = None,
+        wind_production: list[float] | None = None,
+        solar_production: list[float] | None = None,
     ) -> list[dict]:
         """
         Predict Tempo colors using calibrated RTE algorithm.
@@ -416,18 +400,10 @@ class HybridTempoPredictor:
         state = TempoState(stock_red=stock_red, stock_white=stock_white)
         predictions = []
 
-        for i, (d, temp) in enumerate(zip(dates, temperatures)):
+        for i, (d, temp) in enumerate(zip(dates, temperatures, strict=False)):
             # Get renewable data if available
-            wind = (
-                wind_production[i]
-                if wind_production and i < len(wind_production)
-                else None
-            )
-            solar = (
-                solar_production[i]
-                if solar_production and i < len(solar_production)
-                else None
-            )
+            wind = wind_production[i] if wind_production and i < len(wind_production) else None
+            solar = solar_production[i] if solar_production and i < len(solar_production) else None
 
             # Estimate consumption
             consumption = self._estimate_consumption(temp, d, wind, solar)
@@ -435,9 +411,7 @@ class HybridTempoPredictor:
 
             # Get thresholds
             tempo_day = get_tempo_day_number(d)
-            threshold_red = self.algorithm.calculate_threshold_red(
-                tempo_day, state.stock_red
-            )
+            threshold_red = self.algorithm.calculate_threshold_red(tempo_day, state.stock_red)
             threshold_white = self.algorithm.calculate_threshold_white_red(
                 tempo_day, state.stock_red, state.stock_white
             )
@@ -598,9 +572,7 @@ class HybridTempoPredictor:
             # Predict
             consumption = self._estimate_consumption(temp, current)
             normalized = self.algorithm.normalize_consumption(consumption)
-            predicted_color, _ = self.algorithm.determine_color(
-                current, normalized, state
-            )
+            predicted_color, _ = self.algorithm.determine_color(current, normalized, state)
 
             # Record
             confusion[actual_color][predicted_color] += 1
@@ -631,21 +603,13 @@ class HybridTempoPredictor:
         accuracy = correct / total if total > 0 else 0
 
         red_predicted = (
-            confusion["BLUE"]["RED"]
-            + confusion["WHITE"]["RED"]
-            + confusion["RED"]["RED"]
+            confusion["BLUE"]["RED"] + confusion["WHITE"]["RED"] + confusion["RED"]["RED"]
         )
-        red_actual = (
-            confusion["RED"]["BLUE"]
-            + confusion["RED"]["WHITE"]
-            + confusion["RED"]["RED"]
-        )
+        red_actual = confusion["RED"]["BLUE"] + confusion["RED"]["WHITE"] + confusion["RED"]["RED"]
         red_correct = confusion["RED"]["RED"]
 
         white_predicted = (
-            confusion["BLUE"]["WHITE"]
-            + confusion["WHITE"]["WHITE"]
-            + confusion["RED"]["WHITE"]
+            confusion["BLUE"]["WHITE"] + confusion["WHITE"]["WHITE"] + confusion["RED"]["WHITE"]
         )
         white_correct = confusion["WHITE"]["WHITE"]
 
@@ -659,13 +623,9 @@ class HybridTempoPredictor:
 
         white_precision = white_correct / white_predicted if white_predicted > 0 else 0
         white_actual_count = (
-            confusion["WHITE"]["BLUE"]
-            + confusion["WHITE"]["WHITE"]
-            + confusion["WHITE"]["RED"]
+            confusion["WHITE"]["BLUE"] + confusion["WHITE"]["WHITE"] + confusion["WHITE"]["RED"]
         )
-        white_recall = (
-            white_correct / white_actual_count if white_actual_count > 0 else 0
-        )
+        white_recall = white_correct / white_actual_count if white_actual_count > 0 else 0
         white_f1 = (
             2 * white_precision * white_recall / (white_precision + white_recall)
             if (white_precision + white_recall) > 0
@@ -718,13 +678,11 @@ class HybridTempoPredictor:
                 "total_days": total_days,
                 "total_correct": total_correct,
                 "overall_accuracy": total_correct / total_days if total_days > 0 else 0,
-                "avg_red_recall": total_red_recall / total_days
-                if total_days > 0
-                else 0,
+                "avg_red_recall": total_red_recall / total_days if total_days > 0 else 0,
             },
         }
 
-    def get_season_history(self, season: str = None) -> list[dict]:
+    def get_season_history(self, season: str | None = None) -> list[dict]:
         """
         Get complete history for a season with actual colors.
 
@@ -794,7 +752,7 @@ def main():
     predictor = HybridTempoPredictor(auto_load=False)
 
     # Calibrate
-    calibration = predictor.calibrate(start_year=2015)
+    predictor.calibrate(start_year=2015)
 
     # Backtest on multiple seasons
     print("\n" + "=" * 60)
@@ -811,19 +769,15 @@ def main():
             continue
 
         print(f"\n{season}:")
-        print(
-            f"  Accuracy: {results['accuracy']:.1%} ({results['correct']}/{results['total']})"
-        )
-        print(
-            f"  RED: P={results['red_metrics']['precision']:.1%} R={results['red_metrics']['recall']:.1%} F1={results['red_metrics']['f1']:.2f}"
-        )
-        print(
-            f"  WHITE: P={results['white_metrics']['precision']:.1%} R={results['white_metrics']['recall']:.1%} F1={results['white_metrics']['f1']:.2f}"
-        )
+        print(f"  Accuracy: {results['accuracy']:.1%} ({results['correct']}/{results['total']})")
+        red = results["red_metrics"]
+        print(f"  RED: P={red['precision']:.1%} R={red['recall']:.1%} F1={red['f1']:.2f}")
+        white = results["white_metrics"]
+        print(f"  WHITE: P={white['precision']:.1%} R={white['recall']:.1%} F1={white['f1']:.2f}")
 
-        print(f"\n  Confusion Matrix:")
+        print("\n  Confusion Matrix:")
         confusion = results["confusion"]
-        print(f"             BLUE   WHITE    RED  (Predicted)")
+        print("             BLUE   WHITE    RED  (Predicted)")
         for actual in ["BLUE", "WHITE", "RED"]:
             row = f"    {actual:>5}"
             for pred in ["BLUE", "WHITE", "RED"]:

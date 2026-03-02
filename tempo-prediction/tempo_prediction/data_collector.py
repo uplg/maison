@@ -4,23 +4,11 @@ Fetches historical and forecast data from various APIs.
 """
 
 import json
-import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 import polars as pl
 import requests
-
-
-class DateTimeEncoder(json.JSONEncoder):
-    """JSON encoder that handles datetime objects."""
-
-    def default(self, obj):
-        if isinstance(obj, (datetime, date)):
-            return obj.isoformat()
-        return super().default(obj)
-
 
 from .constants import (
     CACHE_DIR,
@@ -32,6 +20,15 @@ from .constants import (
     RTE_TEMPO_API,
     get_tempo_year,
 )
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    """JSON encoder that handles datetime objects."""
+
+    def default(self, obj):
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 def _parse_date_col(df: pl.DataFrame, col: str = "date") -> pl.DataFrame:
@@ -47,7 +44,7 @@ class TempoDataCollector:
     - Temperature data (historical and forecast)
     """
 
-    def __init__(self, cache_dir: Optional[str] = None):
+    def __init__(self, cache_dir: str | None = None):
         self.cache_dir = Path(cache_dir or CACHE_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.session = requests.Session()
@@ -61,14 +58,14 @@ class TempoDataCollector:
     def _get_cache_path(self, name: str) -> Path:
         return self.cache_dir / f"{name}.json"
 
-    def _load_cache(self, name: str, max_age_hours: int = 24) -> Optional[dict]:
+    def _load_cache(self, name: str, max_age_hours: int = 24) -> dict | None:
         """Load cached data if it exists and is not too old."""
         cache_path = self._get_cache_path(name)
         if not cache_path.exists():
             return None
 
         try:
-            with open(cache_path, "r") as f:
+            with cache_path.open() as f:
                 data = json.load(f)
 
             cached_at = datetime.fromisoformat(data.get("_cached_at", "2000-01-01"))
@@ -83,10 +80,10 @@ class TempoDataCollector:
         """Save data to cache with proper datetime serialization."""
         data["_cached_at"] = datetime.now().isoformat()
         cache_path = self._get_cache_path(name)
-        with open(cache_path, "w") as f:
+        with cache_path.open("w") as f:
             json.dump(data, f, indent=2, cls=DateTimeEncoder)
 
-    def fetch_tempo_history(self, season: Optional[str] = None) -> dict[str, str]:
+    def fetch_tempo_history(self, season: str | None = None) -> dict[str, str]:
         """
         Fetch Tempo color history from RTE API.
 
@@ -257,9 +254,7 @@ class TempoDataCollector:
         )
 
         daily = daily.with_columns(
-            (pl.col("consumption") - pl.col("wind") - pl.col("solar")).alias(
-                "net_consumption"
-            )
+            (pl.col("consumption") - pl.col("wind") - pl.col("solar")).alias("net_consumption")
         )
 
         self._save_cache(cache_name, {"data": daily.to_dicts()})
@@ -292,9 +287,7 @@ class TempoDataCollector:
         }
 
         try:
-            response = self.session.get(
-                OPEN_METEO_HISTORICAL_API, params=params, timeout=30
-            )
+            response = self.session.get(OPEN_METEO_HISTORICAL_API, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
 
@@ -320,9 +313,7 @@ class TempoDataCollector:
             print(f"Error fetching temperature history: {e}")
             if cached and "data" in cached:
                 return _parse_date_col(pl.DataFrame(cached["data"]))
-            return pl.DataFrame(
-                schema={"date": pl.Date, "temperature_mean": pl.Float64}
-            )
+            return pl.DataFrame(schema={"date": pl.Date, "temperature_mean": pl.Float64})
 
     def fetch_temperature_forecast(self, days: int = 7) -> pl.DataFrame:
         """
@@ -371,14 +362,12 @@ class TempoDataCollector:
             print(f"Error fetching temperature forecast: {e}")
             if cached and "data" in cached:
                 return _parse_date_col(pl.DataFrame(cached["data"]))
-            return pl.DataFrame(
-                schema={"date": pl.Date, "temperature_mean": pl.Float64}
-            )
+            return pl.DataFrame(schema={"date": pl.Date, "temperature_mean": pl.Float64})
 
     def build_training_dataset(
         self,
         start_year: int = 2015,
-        end_date: Optional[date] = None,
+        end_date: date | None = None,
     ) -> pl.DataFrame:
         """
         Build a complete training dataset combining all data sources.
@@ -410,9 +399,7 @@ class TempoDataCollector:
         # Add Tempo-specific features
         tempo_df = tempo_df.with_columns(
             pl.col("date")
-            .map_elements(
-                lambda d: self._get_tempo_day_number(d), return_dtype=pl.Int64
-            )
+            .map_elements(lambda d: self._get_tempo_day_number(d), return_dtype=pl.Int64)
             .alias("tempo_day")
         )
 

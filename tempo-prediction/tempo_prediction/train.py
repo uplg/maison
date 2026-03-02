@@ -60,13 +60,15 @@ def main():
 
                 print(f"\n{season}:")
                 print(
-                    f"  Accuracy: {results['accuracy']:.1%} ({results['correct']}/{results['total']})"
+                    f"  Accuracy: {results['accuracy']:.1%}"
+                    f" ({results['correct']}/{results['total']})"
                 )
+                red = results["red_metrics"]
+                print(f"  RED: P={red['precision']:.1%} R={red['recall']:.1%} F1={red['f1']:.2f}")
+                white = results["white_metrics"]
                 print(
-                    f"  RED: P={results['red_metrics']['precision']:.1%} R={results['red_metrics']['recall']:.1%} F1={results['red_metrics']['f1']:.2f}"
-                )
-                print(
-                    f"  WHITE: P={results['white_metrics']['precision']:.1%} R={results['white_metrics']['recall']:.1%} F1={results['white_metrics']['f1']:.2f}"
+                    f"  WHITE: P={white['precision']:.1%}"
+                    f" R={white['recall']:.1%} F1={white['f1']:.2f}"
                 )
             except Exception as e:
                 print(f"\n{season}: Error - {e}")
