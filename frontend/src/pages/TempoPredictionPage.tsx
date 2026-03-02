@@ -43,13 +43,7 @@ const colorConfig = {
   },
 };
 
-function PredictionCard({
-  prediction,
-  index,
-}: {
-  prediction: TempoPrediction;
-  index: number;
-}) {
+function PredictionCard({ prediction, index }: { prediction: TempoPrediction; index: number }) {
   const { t, i18n } = useTranslation();
   const config = colorConfig[prediction.predicted_color];
 
@@ -80,16 +74,13 @@ function PredictionCard({
       <CardHeader className="pb-2 pt-4">
         <div className="flex justify-between items-start">
           <div>
-            <p className="text-sm text-muted-foreground capitalize">
-              {dayLabel}
-            </p>
+            <p className="text-sm text-muted-foreground capitalize">{dayLabel}</p>
             <p className="text-lg font-semibold">{dateLabel}</p>
           </div>
           <Badge
             className={`${config.bg} ${prediction.predicted_color === "WHITE" ? "text-gray-700" : "text-white"} text-lg px-3 py-1`}
           >
-            {config.icon}{" "}
-            {t(`tempo.colors.${prediction.predicted_color.toLowerCase()}`)}
+            {config.icon} {t(`tempo.colors.${prediction.predicted_color.toLowerCase()}`)}
           </Badge>
         </div>
       </CardHeader>
@@ -98,9 +89,7 @@ function PredictionCard({
         {/* Confidence */}
         <div className="space-y-1">
           <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">
-              {t("tempo.prediction.confidence")}
-            </span>
+            <span className="text-muted-foreground">{t("tempo.prediction.confidence")}</span>
             <span className="font-medium">{confidencePercent}%</span>
           </div>
           <Progress value={confidencePercent} className="h-2" />
@@ -175,8 +164,7 @@ function StateCard({
   const redUsed = state.stock_red_total - state.stock_red_remaining;
   const whiteUsed = state.stock_white_total - state.stock_white_remaining;
   const redPercent = (state.stock_red_remaining / state.stock_red_total) * 100;
-  const whitePercent =
-    (state.stock_white_remaining / state.stock_white_total) * 100;
+  const whitePercent = (state.stock_white_remaining / state.stock_white_total) * 100;
 
   return (
     <Card>
@@ -198,10 +186,7 @@ function StateCard({
               {redUsed} / {state.stock_red_total} {t("tempo.prediction.used")}
             </span>
           </div>
-          <Progress
-            value={100 - redPercent}
-            className="h-3 bg-red-100 [&>div]:bg-red-500"
-          />
+          <Progress value={100 - redPercent} className="h-3 bg-red-100 [&>div]:bg-red-500" />
           <p className="text-xs text-muted-foreground">
             {state.stock_red_remaining} {t("tempo.prediction.remaining")}
           </p>
@@ -215,14 +200,10 @@ function StateCard({
               {t("tempo.prediction.whiteDays")}
             </span>
             <span className="font-medium">
-              {whiteUsed} / {state.stock_white_total}{" "}
-              {t("tempo.prediction.used")}
+              {whiteUsed} / {state.stock_white_total} {t("tempo.prediction.used")}
             </span>
           </div>
-          <Progress
-            value={100 - whitePercent}
-            className="h-3 bg-gray-200 [&>div]:bg-gray-500"
-          />
+          <Progress value={100 - whitePercent} className="h-3 bg-gray-200 [&>div]:bg-gray-500" />
           <p className="text-xs text-muted-foreground">
             {state.stock_white_remaining} {t("tempo.prediction.remaining")}
           </p>
@@ -277,19 +258,13 @@ export default function TempoPredictionPage() {
 
   const isLoading = loadingPredictions || loadingState;
   const hasError =
-    (predictionsData && !predictionsData.success) ||
-    (stateData && !stateData.success);
+    (predictionsData && !predictionsData.success) || (stateData && !stateData.success);
 
   return (
     <div className="container max-w-6xl mx-auto py-6 px-4 space-y-6">
       {/* Header */}
       <div className="flex items-center gap-4">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => navigate("/")}
-          className="shrink-0"
-        >
+        <Button variant="ghost" size="icon" onClick={() => navigate("/")} className="shrink-0">
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <div className="flex-1">
@@ -297,9 +272,7 @@ export default function TempoPredictionPage() {
             <TrendingUp className="h-6 w-6" />
             {t("tempo.prediction.title")}
           </h1>
-          <p className="text-muted-foreground">
-            {t("tempo.prediction.subtitle")}
-          </p>
+          <p className="text-muted-foreground">{t("tempo.prediction.subtitle")}</p>
         </div>
         <Badge variant="outline" className="gap-1">
           <Zap className="h-3 w-3" />
@@ -314,14 +287,10 @@ export default function TempoPredictionPage() {
             <div className="flex items-center gap-2 text-destructive">
               <AlertCircle className="h-5 w-5" />
               <span>
-                {predictionsData?.error ||
-                  stateData?.error ||
-                  t("tempo.prediction.error")}
+                {predictionsData?.error || stateData?.error || t("tempo.prediction.error")}
               </span>
             </div>
-            <p className="text-sm text-muted-foreground mt-1">
-              {t("tempo.prediction.errorHint")}
-            </p>
+            <p className="text-sm text-muted-foreground mt-1">{t("tempo.prediction.errorHint")}</p>
           </CardContent>
         </Card>
       )}
@@ -336,9 +305,7 @@ export default function TempoPredictionPage() {
           <TempoCalendar />
 
           {/* State card */}
-          {predictionsData.state && (
-            <StateCard state={predictionsData.state} />
-          )}
+          {predictionsData.state && <StateCard state={predictionsData.state} />}
 
           {/* Predictions grid */}
           <div>
@@ -348,11 +315,7 @@ export default function TempoPredictionPage() {
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {predictionsData.predictions?.map((prediction, index) => (
-                <PredictionCard
-                  key={prediction.date}
-                  prediction={prediction}
-                  index={index}
-                />
+                <PredictionCard key={prediction.date} prediction={prediction} index={index} />
               ))}
             </div>
           </div>
@@ -360,9 +323,7 @@ export default function TempoPredictionPage() {
           {/* Explanation */}
           <Card className="bg-muted/50">
             <CardContent className="py-4 text-sm text-muted-foreground">
-              <p className="font-medium mb-2">
-                {t("tempo.prediction.howItWorks")}
-              </p>
+              <p className="font-medium mb-2">{t("tempo.prediction.howItWorks")}</p>
               <p>{t("tempo.prediction.explanation")}</p>
             </CardContent>
           </Card>

@@ -5,10 +5,7 @@ interface ApiOptions {
   body?: unknown;
 }
 
-export async function api<T>(
-  endpoint: string,
-  options: ApiOptions = {},
-): Promise<T> {
+export async function api<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
   const token = localStorage.getItem("token");
 
   const headers: HeadersInit = {
@@ -161,14 +158,12 @@ export const devicesApi = {
 
   disconnectAll: () => api("/devices/disconnect", { method: "POST" }),
 
-  status: (deviceId: string) =>
-    api<DeviceStatusResponse>(`/devices/${deviceId}/status`),
+  status: (deviceId: string) => api<DeviceStatusResponse>(`/devices/${deviceId}/status`),
 };
 
 // Feeder API
 export const feederApi = {
-  status: (deviceId: string) =>
-    api<DeviceStatusResponse>(`/devices/${deviceId}/feeder/status`),
+  status: (deviceId: string) => api<DeviceStatusResponse>(`/devices/${deviceId}/feeder/status`),
 
   feed: (deviceId: string, portion: number = 1) =>
     api(`/devices/${deviceId}/feeder/feed`, {
@@ -176,8 +171,7 @@ export const feederApi = {
       body: { portion },
     }),
 
-  getMealPlan: (deviceId: string) =>
-    api<MealPlanResponse>(`/devices/${deviceId}/feeder/meal-plan`),
+  getMealPlan: (deviceId: string) => api<MealPlanResponse>(`/devices/${deviceId}/feeder/meal-plan`),
 
   setMealPlan: (deviceId: string, mealPlan: MealPlanEntry[]) =>
     api(`/devices/${deviceId}/feeder/meal-plan`, {
@@ -188,8 +182,7 @@ export const feederApi = {
 
 // Fountain API
 export const fountainApi = {
-  status: (deviceId: string) =>
-    api<DeviceStatusResponse>(`/devices/${deviceId}/fountain/status`),
+  status: (deviceId: string) => api<DeviceStatusResponse>(`/devices/${deviceId}/fountain/status`),
 
   power: (deviceId: string, enabled: boolean) =>
     api(`/devices/${deviceId}/fountain/power`, {
@@ -222,11 +215,9 @@ export const fountainApi = {
 
 // Litter box API
 export const litterBoxApi = {
-  status: (deviceId: string) =>
-    api<DeviceStatusResponse>(`/devices/${deviceId}/litter-box/status`),
+  status: (deviceId: string) => api<DeviceStatusResponse>(`/devices/${deviceId}/litter-box/status`),
 
-  clean: (deviceId: string) =>
-    api(`/devices/${deviceId}/litter-box/clean`, { method: "POST" }),
+  clean: (deviceId: string) => api(`/devices/${deviceId}/litter-box/clean`, { method: "POST" }),
 
   settings: (
     deviceId: string,
@@ -325,14 +316,11 @@ export const hueLampsApi = {
 
   disconnectAll: () => api("/hue-lamps/disconnect", { method: "POST" }),
 
-  status: (lampId: string) =>
-    api<HueLampStatusResponse>(`/hue-lamps/${lampId}`),
+  status: (lampId: string) => api<HueLampStatusResponse>(`/hue-lamps/${lampId}`),
 
-  connect: (lampId: string) =>
-    api(`/hue-lamps/${lampId}/connect`, { method: "POST" }),
+  connect: (lampId: string) => api(`/hue-lamps/${lampId}/connect`, { method: "POST" }),
 
-  disconnect: (lampId: string) =>
-    api(`/hue-lamps/${lampId}/disconnect`, { method: "POST" }),
+  disconnect: (lampId: string) => api(`/hue-lamps/${lampId}/disconnect`, { method: "POST" }),
 
   power: (lampId: string, enabled: boolean) =>
     api<HueLampActionResponse>(`/hue-lamps/${lampId}/power`, {
@@ -457,8 +445,7 @@ export interface MerossConsumptionResponse {
 export const merossApi = {
   list: () => api<MerossPlugsResponse>("/meross"),
 
-  status: (deviceId: string) =>
-    api<MerossPlugStatusResponse>(`/meross/${deviceId}/status`),
+  status: (deviceId: string) => api<MerossPlugStatusResponse>(`/meross/${deviceId}/status`),
 
   electricity: (deviceId: string) =>
     api<MerossElectricityResponse>(`/meross/${deviceId}/electricity`),
@@ -524,14 +511,10 @@ export const tempoApi = {
   getState: () => api<TempoStateData>("/tempo/state"),
 
   getCalendar: (season?: string) =>
-    api<TempoCalendarData>(
-      `/tempo/calendar${season ? `?season=${season}` : ""}`,
-    ),
+    api<TempoCalendarData>(`/tempo/calendar${season ? `?season=${season}` : ""}`),
 
   getHistory: (season?: string) =>
-    api<TempoHistoryData>(
-      `/tempo/history${season ? `?season=${season}` : ""}`,
-    ),
+    api<TempoHistoryData>(`/tempo/history${season ? `?season=${season}` : ""}`),
 
   getCalibration: () => api<TempoCalibrationData>("/tempo/calibration"),
 };

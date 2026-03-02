@@ -1,29 +1,29 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
-import { useAuth } from './contexts/AuthContext'
-import { LoginPage } from './pages/LoginPage'
-import { DashboardPage } from './pages/DashboardPage'
-import { DevicePage } from './pages/DevicePage'
-import { HueLampPage } from './pages/HueLampPage'
-import { MerossPlugPage } from './pages/MerossPlugPage'
-import TempoPredictionPage from './pages/TempoPredictionPage'
-import { Layout } from './components/Layout'
+import { Routes, Route, Navigate } from "react-router-dom";
+import { useAuth } from "./contexts/AuthContext";
+import { LoginPage } from "./pages/LoginPage";
+import { DashboardPage } from "./pages/DashboardPage";
+import { DevicePage } from "./pages/DevicePage";
+import { HueLampPage } from "./pages/HueLampPage";
+import { MerossPlugPage } from "./pages/MerossPlugPage";
+import TempoPredictionPage from "./pages/TempoPredictionPage";
+import { Layout } from "./components/Layout";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth()
+  const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
       </div>
-    )
+    );
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />
+    return <Navigate to="/login" replace />;
   }
 
-  return <>{children}</>
+  return <>{children}</>;
 }
 
 export default function App() {
@@ -46,5 +46,5 @@ export default function App() {
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
-  )
+  );
 }

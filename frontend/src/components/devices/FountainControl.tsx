@@ -1,20 +1,14 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useTranslation } from 'react-i18next'
-import { fountainApi } from '@/lib/api'
-import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { Switch } from '@/components/ui/switch'
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Separator } from '@/components/ui/separator'
-import { Label } from '@/components/ui/label'
-import { toast } from '@/hooks/use-toast'
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { fountainApi } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
+import { Label } from "@/components/ui/label";
+import { toast } from "@/hooks/use-toast";
 import {
   Droplets,
   Loader2,
@@ -25,156 +19,156 @@ import {
   AlertTriangle,
   Filter,
   Gauge,
-} from 'lucide-react'
+} from "lucide-react";
 
 interface FountainControlProps {
-  deviceId: string
+  deviceId: string;
 }
 
 export function FountainControl({ deviceId }: FountainControlProps) {
-  const { t } = useTranslation()
-  const queryClient = useQueryClient()
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   const { data: statusData, isLoading } = useQuery({
-    queryKey: ['fountain', deviceId, 'status'],
+    queryKey: ["fountain", deviceId, "status"],
     queryFn: () => fountainApi.status(deviceId),
     refetchInterval: 10000,
-  })
+  });
 
   const powerMutation = useMutation({
     mutationFn: (enabled: boolean) => fountainApi.power(deviceId, enabled),
     onSuccess: (_, enabled) => {
-      queryClient.invalidateQueries({ queryKey: ['fountain', deviceId] })
+      queryClient.invalidateQueries({ queryKey: ["fountain", deviceId] });
       toast({
-        title: enabled ? t('fountain.fountainOn') : t('fountain.fountainOff'),
-      })
+        title: enabled ? t("fountain.fountainOn") : t("fountain.fountainOff"),
+      });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('common.error'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("common.error"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
   const uvMutation = useMutation({
     mutationFn: (enabled: boolean) => fountainApi.setUV(deviceId, enabled),
     onSuccess: (_, enabled) => {
-      queryClient.invalidateQueries({ queryKey: ['fountain', deviceId] })
+      queryClient.invalidateQueries({ queryKey: ["fountain", deviceId] });
       toast({
-        title: enabled ? t('fountain.uvOn') : t('fountain.uvOff'),
-      })
+        title: enabled ? t("fountain.uvOn") : t("fountain.uvOff"),
+      });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('common.error'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("common.error"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
   const ecoModeMutation = useMutation({
     mutationFn: (mode: number) => fountainApi.setEcoMode(deviceId, mode),
     onSuccess: (_, mode) => {
-      queryClient.invalidateQueries({ queryKey: ['fountain', deviceId] })
+      queryClient.invalidateQueries({ queryKey: ["fountain", deviceId] });
       toast({
-        title: mode === 0 ? t('fountain.ecoModeOff') : t('fountain.ecoModeOn', { mode }),
-      })
+        title: mode === 0 ? t("fountain.ecoModeOff") : t("fountain.ecoModeOn", { mode }),
+      });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('common.error'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("common.error"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
   const resetWaterMutation = useMutation({
     mutationFn: () => fountainApi.resetWater(deviceId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['fountain', deviceId] })
-      toast({ title: t('fountain.waterCounterReset') })
+      queryClient.invalidateQueries({ queryKey: ["fountain", deviceId] });
+      toast({ title: t("fountain.waterCounterReset") });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('common.error'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("common.error"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
   const resetFilterMutation = useMutation({
     mutationFn: () => fountainApi.resetFilter(deviceId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['fountain', deviceId] })
-      toast({ title: t('fountain.filterCounterReset') })
+      queryClient.invalidateQueries({ queryKey: ["fountain", deviceId] });
+      toast({ title: t("fountain.filterCounterReset") });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('common.error'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("common.error"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
   const resetPumpMutation = useMutation({
     mutationFn: () => fountainApi.resetPump(deviceId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['fountain', deviceId] })
-      toast({ title: t('fountain.pumpCounterReset') })
+      queryClient.invalidateQueries({ queryKey: ["fountain", deviceId] });
+      toast({ title: t("fountain.pumpCounterReset") });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('common.error'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("common.error"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
-  const parsedStatus = statusData?.parsed_status as {
-    power?: boolean
-    uv_enabled?: boolean
-    uv_runtime?: number  // in seconds, > 0 = UV active
-    eco_mode?: number  // 0 = off, 1 = mode 1, 2 = mode 2
-    water_level?: string
-    filter_life?: number  // in minutes
-    pump_time?: number    // in minutes
-    water_time?: number
-  } | undefined
+  const parsedStatus = statusData?.parsed_status as
+    | {
+        power?: boolean;
+        uv_enabled?: boolean;
+        uv_runtime?: number; // in seconds, > 0 = UV active
+        eco_mode?: number; // 0 = off, 1 = mode 1, 2 = mode 2
+        water_level?: string;
+        filter_life?: number; // in minutes
+        pump_time?: number; // in minutes
+        water_time?: number;
+      }
+    | undefined;
 
   // UV is considered active if uv_runtime > 0, otherwise fallback on uv_enabled
-  const isUvActive = (parsedStatus?.uv_runtime ?? 0) > 0 || (parsedStatus?.uv_enabled ?? false)
+  const isUvActive = (parsedStatus?.uv_runtime ?? 0) > 0 || (parsedStatus?.uv_enabled ?? false);
 
   const formatSeconds = (seconds: number): string => {
-    if (seconds < 60) return `${seconds}s`
+    if (seconds < 60) return `${seconds}s`;
     if (seconds < 3600) {
-      const mins = Math.floor(seconds / 60)
-      const secs = seconds % 60
-      return secs > 0 ? `${mins}min ${secs}s` : `${mins}min`
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return secs > 0 ? `${mins}min ${secs}s` : `${mins}min`;
     }
-    const hours = Math.floor(seconds / 3600)
-    const mins = Math.floor((seconds % 3600) / 60)
-    return mins > 0 ? `${hours}h ${mins}min` : `${hours}h`
-  }
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return mins > 0 ? `${hours}h ${mins}min` : `${hours}h`;
+  };
 
   const formatMinutes = (minutes: number): string => {
-    if (minutes < 60) return `${minutes} min`
-    if (minutes < 1440) return `${Math.floor(minutes / 60)}h ${minutes % 60}min`
-    const days = Math.floor(minutes / 1440)
-    const hours = Math.floor((minutes % 1440) / 60)
-    return `${days}j ${hours}h`
-  }
+    if (minutes < 60) return `${minutes} min`;
+    if (minutes < 1440) return `${Math.floor(minutes / 60)}h ${minutes % 60}min`;
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    return `${days}j ${hours}h`;
+  };
 
   const isAnyMutating =
-    powerMutation.isPending ||
-    uvMutation.isPending ||
-    ecoModeMutation.isPending
+    powerMutation.isPending || uvMutation.isPending || ecoModeMutation.isPending;
 
   if (isLoading) {
     return (
@@ -196,7 +190,7 @@ export function FountainControl({ deviceId }: FountainControlProps) {
           </CardContent>
         </Card>
       </div>
-    )
+    );
   }
 
   return (
@@ -205,11 +199,9 @@ export function FountainControl({ deviceId }: FountainControlProps) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Droplets className="h-5 w-5" />
-            {t('fountain.controls')}
+            {t("fountain.controls")}
           </CardTitle>
-          <CardDescription>
-            {t('fountain.controlsDescription')}
-          </CardDescription>
+          <CardDescription>{t("fountain.controlsDescription")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="flex items-center justify-between">
@@ -218,10 +210,8 @@ export function FountainControl({ deviceId }: FountainControlProps) {
                 <Power className="h-5 w-5 text-blue-600" />
               </div>
               <div>
-                <Label>{t('fountain.power')}</Label>
-                <p className="text-sm text-muted-foreground">
-                  {t('fountain.powerDescription')}
-                </p>
+                <Label>{t("fountain.power")}</Label>
+                <p className="text-sm text-muted-foreground">{t("fountain.powerDescription")}</p>
               </div>
             </div>
             <Switch
@@ -235,22 +225,28 @@ export function FountainControl({ deviceId }: FountainControlProps) {
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${isUvActive ? 'bg-yellow-200' : 'bg-yellow-100'}`}>
-                <Sun className={`h-5 w-5 ${isUvActive ? 'text-yellow-700 animate-pulse' : 'text-yellow-600'}`} />
+              <div
+                className={`flex h-10 w-10 items-center justify-center rounded-lg ${isUvActive ? "bg-yellow-200" : "bg-yellow-100"}`}
+              >
+                <Sun
+                  className={`h-5 w-5 ${isUvActive ? "text-yellow-700 animate-pulse" : "text-yellow-600"}`}
+                />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <Label>{t('fountain.uvSterilization')}</Label>
+                  <Label>{t("fountain.uvSterilization")}</Label>
                   {isUvActive && (
                     <Badge variant="success" className="text-xs">
-                      {t('fountain.uvActive')}
+                      {t("fountain.uvActive")}
                     </Badge>
                   )}
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  {isUvActive 
-                    ? t('fountain.uvRuntime', { time: formatSeconds(parsedStatus?.uv_runtime ?? 0) })
-                    : t('fountain.uvDescription')}
+                  {isUvActive
+                    ? t("fountain.uvRuntime", {
+                        time: formatSeconds(parsedStatus?.uv_runtime ?? 0),
+                      })
+                    : t("fountain.uvDescription")}
                 </p>
               </div>
             </div>
@@ -269,30 +265,28 @@ export function FountainControl({ deviceId }: FountainControlProps) {
                 <Leaf className="h-5 w-5 text-green-600" />
               </div>
               <div>
-                <Label>{t('fountain.ecoMode')}</Label>
-                <p className="text-sm text-muted-foreground">
-                  {t('fountain.ecoModeDescription')}
-                </p>
+                <Label>{t("fountain.ecoMode")}</Label>
+                <p className="text-sm text-muted-foreground">{t("fountain.ecoModeDescription")}</p>
               </div>
             </div>
             <div className="flex gap-2">
               <Button
-                variant={parsedStatus?.eco_mode === 1 ? 'default' : 'outline'}
+                variant={parsedStatus?.eco_mode === 1 ? "default" : "outline"}
                 size="sm"
                 onClick={() => ecoModeMutation.mutate(1)}
                 disabled={isAnyMutating}
                 className="flex-1"
               >
-                {t('fountain.mode1')}
+                {t("fountain.mode1")}
               </Button>
               <Button
-                variant={parsedStatus?.eco_mode === 2 ? 'default' : 'outline'}
+                variant={parsedStatus?.eco_mode === 2 ? "default" : "outline"}
                 size="sm"
                 onClick={() => ecoModeMutation.mutate(2)}
                 disabled={isAnyMutating}
                 className="flex-1"
               >
-                {t('fountain.mode2')}
+                {t("fountain.mode2")}
               </Button>
             </div>
           </div>
@@ -301,38 +295,36 @@ export function FountainControl({ deviceId }: FountainControlProps) {
 
       <Card>
         <CardHeader>
-          <CardTitle>{t('fountain.statusMaintenance')}</CardTitle>
-          <CardDescription>
-            {t('fountain.statusMaintenanceDescription')}
-          </CardDescription>
+          <CardTitle>{t("fountain.statusMaintenance")}</CardTitle>
+          <CardDescription>{t("fountain.statusMaintenanceDescription")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Droplets className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium">{t('fountain.waterLevel')}</span>
+                <span className="text-sm font-medium">{t("fountain.waterLevel")}</span>
               </div>
               <Badge
                 variant={
-                  parsedStatus?.water_level === 'low'
-                    ? 'destructive'
-                    : parsedStatus?.water_level === 'medium'
-                    ? 'warning'
-                    : 'success'
+                  parsedStatus?.water_level === "low"
+                    ? "destructive"
+                    : parsedStatus?.water_level === "medium"
+                      ? "warning"
+                      : "success"
                 }
               >
-                {parsedStatus?.water_level === 'low'
-                  ? t('fountain.waterLevelLow')
-                  : parsedStatus?.water_level === 'medium'
-                  ? t('fountain.waterLevelMedium')
-                  : t('fountain.waterLevelOk')}
+                {parsedStatus?.water_level === "low"
+                  ? t("fountain.waterLevelLow")
+                  : parsedStatus?.water_level === "medium"
+                    ? t("fountain.waterLevelMedium")
+                    : t("fountain.waterLevelOk")}
               </Badge>
             </div>
-            {parsedStatus?.water_level === 'low' && (
+            {parsedStatus?.water_level === "low" && (
               <div className="flex items-center gap-2 text-sm text-destructive">
                 <AlertTriangle className="h-4 w-4" />
-                {t('fountain.addWater')}
+                {t("fountain.addWater")}
               </div>
             )}
           </div>
@@ -344,7 +336,7 @@ export function FountainControl({ deviceId }: FountainControlProps) {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Filter className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">{t('fountain.filterTime')}</span>
+                  <span className="text-sm font-medium">{t("fountain.filterTime")}</span>
                 </div>
                 <span className="text-sm font-mono">{formatMinutes(parsedStatus.filter_life)}</span>
               </div>
@@ -360,7 +352,7 @@ export function FountainControl({ deviceId }: FountainControlProps) {
                 ) : (
                   <RefreshCw className="mr-2 h-4 w-4" />
                 )}
-                {t('fountain.resetFilterChanged')}
+                {t("fountain.resetFilterChanged")}
               </Button>
             </div>
           )}
@@ -372,7 +364,7 @@ export function FountainControl({ deviceId }: FountainControlProps) {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Gauge className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">{t('fountain.pumpTime')}</span>
+                  <span className="text-sm font-medium">{t("fountain.pumpTime")}</span>
                 </div>
                 <span className="text-sm font-mono">{formatMinutes(parsedStatus.pump_time)}</span>
               </div>
@@ -388,7 +380,7 @@ export function FountainControl({ deviceId }: FountainControlProps) {
                 ) : (
                   <RefreshCw className="mr-2 h-4 w-4" />
                 )}
-                {t('fountain.resetPumpCleaned')}
+                {t("fountain.resetPumpCleaned")}
               </Button>
             </div>
           )}
@@ -397,7 +389,7 @@ export function FountainControl({ deviceId }: FountainControlProps) {
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Droplets className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">{t('fountain.freshWater')}</span>
+              <span className="text-sm font-medium">{t("fountain.freshWater")}</span>
             </div>
             <Button
               variant="outline"
@@ -411,11 +403,11 @@ export function FountainControl({ deviceId }: FountainControlProps) {
               ) : (
                 <RefreshCw className="mr-2 h-4 w-4" />
               )}
-              {t('fountain.waterChanged')}
+              {t("fountain.waterChanged")}
             </Button>
           </div>
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

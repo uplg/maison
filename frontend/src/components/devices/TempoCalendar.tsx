@@ -5,12 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -128,15 +123,9 @@ function CalendarDay({ day, isToday }: CalendarDayProps) {
                 transition-all cursor-pointer hover:scale-105
               `}
             >
-              <span
-                className={`text-xs font-medium ${isToday ? "font-bold" : ""}`}
-              >
-                {dayNum}
-              </span>
+              <span className={`text-xs font-medium ${isToday ? "font-bold" : ""}`}>{dayNum}</span>
               {day.is_prediction && day.confidence && (
-                <span className="text-[8px] opacity-70">
-                  {Math.round(day.confidence * 100)}%
-                </span>
+                <span className="text-[8px] opacity-70">{Math.round(day.confidence * 100)}%</span>
               )}
             </div>
           </div>
@@ -162,22 +151,14 @@ function CalendarDay({ day, isToday }: CalendarDayProps) {
                   {t("tempo.calendar.prediction")}
                 </span>
               ) : (
-                <span className="text-xs text-muted-foreground">
-                  {t("tempo.calendar.actual")}
-                </span>
+                <span className="text-xs text-muted-foreground">{t("tempo.calendar.actual")}</span>
               )}
             </div>
             {day.probabilities && (
               <div className="grid grid-cols-3 gap-1 text-xs pt-1">
-                <div className="text-blue-600">
-                  B: {Math.round(day.probabilities.BLUE * 100)}%
-                </div>
-                <div className="text-gray-600">
-                  W: {Math.round(day.probabilities.WHITE * 100)}%
-                </div>
-                <div className="text-red-600">
-                  R: {Math.round(day.probabilities.RED * 100)}%
-                </div>
+                <div className="text-blue-600">B: {Math.round(day.probabilities.BLUE * 100)}%</div>
+                <div className="text-gray-600">W: {Math.round(day.probabilities.WHITE * 100)}%</div>
+                <div className="text-red-600">R: {Math.round(day.probabilities.RED * 100)}%</div>
               </div>
             )}
             {day.constraints && !day.constraints.is_in_red_period && (
@@ -286,17 +267,9 @@ function MonthCalendar({ year, month, calendarData }: MonthCalendarProps) {
         {weeks.map((week, weekIndex) =>
           week.map((day, dayIndex) => {
             if (!day) {
-              return (
-                <div key={`${weekIndex}-${dayIndex}`} className="aspect-square" />
-              );
+              return <div key={`${weekIndex}-${dayIndex}`} className="aspect-square" />;
             }
-            return (
-              <CalendarDay
-                key={day.date}
-                day={day}
-                isToday={day.date === todayStr}
-              />
-            );
+            return <CalendarDay key={day.date} day={day} isToday={day.date === todayStr} />;
           }),
         )}
       </div>
@@ -325,9 +298,7 @@ export function TempoCalendar() {
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth();
   const defaultSeason =
-    currentMonth >= 8
-      ? `${currentYear}-${currentYear + 1}`
-      : `${currentYear - 1}-${currentYear}`;
+    currentMonth >= 8 ? `${currentYear}-${currentYear + 1}` : `${currentYear - 1}-${currentYear}`;
 
   const [selectedSeason, setSelectedSeason] = useState(defaultSeason);
   const [viewMonth, setViewMonth] = useState(currentMonth);
@@ -386,12 +357,12 @@ export function TempoCalendar() {
   const visibleMonths = useMemo(() => {
     // For current season, only show up to current month + next month (predictions are only 7 days)
     const isCurrentSeason = selectedSeason === defaultSeason;
-    
+
     if (isCurrentSeason) {
       // Show current month and next month only (predictions are max 7 days ahead)
       const months: { year: number; month: number }[] = [];
       months.push({ year: currentYear, month: currentMonth });
-      
+
       // Add next month if we're within 7 days of month end
       const daysInCurrentMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
       const currentDay = currentDate.getDate();
@@ -400,10 +371,10 @@ export function TempoCalendar() {
         const nextYear = currentMonth === 11 ? currentYear + 1 : currentYear;
         months.push({ year: nextYear, month: nextMonth });
       }
-      
+
       return months;
     }
-    
+
     // For past seasons, show all months in a 4-month grid
     const currentIndex = seasonMonths.findIndex(
       (m) => m.year === viewYear && m.month === viewMonth,
@@ -413,12 +384,18 @@ export function TempoCalendar() {
       return seasonMonths.slice(0, 4);
     }
 
-    const startIndex = Math.max(
-      0,
-      Math.min(currentIndex, seasonMonths.length - 4),
-    );
+    const startIndex = Math.max(0, Math.min(currentIndex, seasonMonths.length - 4));
     return seasonMonths.slice(startIndex, startIndex + 4);
-  }, [seasonMonths, viewMonth, viewYear, selectedSeason, defaultSeason, currentYear, currentMonth, currentDate]);
+  }, [
+    seasonMonths,
+    viewMonth,
+    viewYear,
+    selectedSeason,
+    defaultSeason,
+    currentYear,
+    currentMonth,
+    currentDate,
+  ]);
 
   const availableSeasons = getAvailableSeasons();
 
@@ -500,22 +477,22 @@ export function TempoCalendar() {
           </div>
           <div className="flex items-center gap-2">
             <div className="w-4 h-4 rounded bg-blue-100 border border-dashed border-blue-300" />
-            <span className="text-muted-foreground">
-              {t("tempo.calendar.prediction")}
-            </span>
+            <span className="text-muted-foreground">{t("tempo.calendar.prediction")}</span>
           </div>
         </div>
       </CardHeader>
 
       <CardContent className="space-y-4">
         {/* Calendar grid - responsive based on number of months */}
-        <div className={`grid gap-4 ${
-          visibleMonths.length === 1 
-            ? "grid-cols-1 max-w-sm mx-auto" 
-            : visibleMonths.length === 2 
-              ? "grid-cols-1 sm:grid-cols-2 max-w-2xl mx-auto"
-              : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
-        }`}>
+        <div
+          className={`grid gap-4 ${
+            visibleMonths.length === 1
+              ? "grid-cols-1 max-w-sm mx-auto"
+              : visibleMonths.length === 2
+                ? "grid-cols-1 sm:grid-cols-2 max-w-2xl mx-auto"
+                : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
+          }`}
+        >
           {visibleMonths.map(({ year, month }) => (
             <MonthCalendar
               key={`${year}-${month}`}
@@ -530,32 +507,22 @@ export function TempoCalendar() {
         {statistics && stock && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t">
             <div className="text-center">
-              <div className="text-2xl font-bold text-blue-600">
-                {statistics.color_counts.BLUE}
-              </div>
-              <div className="text-sm text-muted-foreground">
-                {t("tempo.colors.blue")}
-              </div>
+              <div className="text-2xl font-bold text-blue-600">{statistics.color_counts.BLUE}</div>
+              <div className="text-sm text-muted-foreground">{t("tempo.colors.blue")}</div>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-gray-600">
                 {statistics.color_counts.WHITE}
-                <span className="text-sm font-normal">
-                  /{stock.white_total}
-                </span>
+                <span className="text-sm font-normal">/{stock.white_total}</span>
               </div>
-              <div className="text-sm text-muted-foreground">
-                {t("tempo.colors.white")}
-              </div>
+              <div className="text-sm text-muted-foreground">{t("tempo.colors.white")}</div>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-red-600">
                 {statistics.color_counts.RED}
                 <span className="text-sm font-normal">/{stock.red_total}</span>
               </div>
-              <div className="text-sm text-muted-foreground">
-                {t("tempo.colors.red")}
-              </div>
+              <div className="text-sm text-muted-foreground">{t("tempo.colors.red")}</div>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-green-600">

@@ -1,23 +1,17 @@
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useTranslation } from 'react-i18next'
-import { litterBoxApi } from '@/lib/api'
-import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { Switch } from '@/components/ui/switch'
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Separator } from '@/components/ui/separator'
-import { Slider } from '@/components/ui/slider'
-import { Label } from '@/components/ui/label'
-import { Input } from '@/components/ui/input'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { litterBoxApi } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
+import { Slider } from "@/components/ui/slider";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -26,8 +20,8 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog'
-import { toast } from '@/hooks/use-toast'
+} from "@/components/ui/dialog";
+import { toast } from "@/hooks/use-toast";
 import {
   Trash2,
   Loader2,
@@ -41,93 +35,95 @@ import {
   AlertTriangle,
   RefreshCw,
   Play,
-} from 'lucide-react'
+} from "lucide-react";
 
 interface LitterBoxControlProps {
-  deviceId: string
+  deviceId: string;
 }
 
 export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
-  const { t } = useTranslation()
-  const queryClient = useQueryClient()
-  const [cleanDelay, setCleanDelay] = useState([120])
-  const [sleepStart, setSleepStart] = useState('23:00')
-  const [sleepEnd, setSleepEnd] = useState('07:00')
-  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false)
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [cleanDelay, setCleanDelay] = useState([120]);
+  const [sleepStart, setSleepStart] = useState("23:00");
+  const [sleepEnd, setSleepEnd] = useState("07:00");
+  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
 
   const { data: statusData, isLoading } = useQuery({
-    queryKey: ['litter-box', deviceId, 'status'],
+    queryKey: ["litter-box", deviceId, "status"],
     queryFn: () => litterBoxApi.status(deviceId),
     refetchInterval: 15000,
-  })
+  });
 
   const cleanMutation = useMutation({
     mutationFn: () => litterBoxApi.clean(deviceId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['litter-box', deviceId] })
+      queryClient.invalidateQueries({ queryKey: ["litter-box", deviceId] });
       toast({
-        title: t('litterBox.cleaningStarted'),
-        description: t('litterBox.cleaningCycleStarted'),
-      })
+        title: t("litterBox.cleaningStarted"),
+        description: t("litterBox.cleaningCycleStarted"),
+      });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('litterBox.cleaningFailed'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("litterBox.cleaningFailed"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
   const settingsMutation = useMutation({
     mutationFn: (settings: Parameters<typeof litterBoxApi.settings>[1]) =>
       litterBoxApi.settings(deviceId, settings),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['litter-box', deviceId] })
+      queryClient.invalidateQueries({ queryKey: ["litter-box", deviceId] });
       toast({
-        title: t('litterBox.settingsUpdated'),
-      })
+        title: t("litterBox.settingsUpdated"),
+      });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('litterBox.settingsUpdateFailed'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("litterBox.settingsUpdateFailed"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
-  const parsedStatus = statusData?.parsed_status as {
-    clean_delay?: {
-      seconds?: number
-      formatted?: string
-    }
-    sleep_mode?: {
-      enabled?: boolean
-      start_time_minutes?: number
-      start_time_formatted?: string
-      end_time_minutes?: number
-      end_time_formatted?: string
-    }
-    sensors?: {
-      litter_level?: string
-      defecation_frequency?: number
-      defecation_duration?: number
-      fault_alarm?: number
-    }
-    system?: {
-      state?: string
-      cleaning_in_progress?: boolean
-      maintenance_required?: boolean
-    }
-    settings?: {
-      lighting?: boolean
-      child_lock?: boolean
-      prompt_sound?: boolean
-      kitten_mode?: boolean
-      automatic_homing?: boolean
-    }
-  } | undefined
+  const parsedStatus = statusData?.parsed_status as
+    | {
+        clean_delay?: {
+          seconds?: number;
+          formatted?: string;
+        };
+        sleep_mode?: {
+          enabled?: boolean;
+          start_time_minutes?: number;
+          start_time_formatted?: string;
+          end_time_minutes?: number;
+          end_time_formatted?: string;
+        };
+        sensors?: {
+          litter_level?: string;
+          defecation_frequency?: number;
+          defecation_duration?: number;
+          fault_alarm?: number;
+        };
+        system?: {
+          state?: string;
+          cleaning_in_progress?: boolean;
+          maintenance_required?: boolean;
+        };
+        settings?: {
+          lighting?: boolean;
+          child_lock?: boolean;
+          prompt_sound?: boolean;
+          kitten_mode?: boolean;
+          automatic_homing?: boolean;
+        };
+      }
+    | undefined;
 
   if (isLoading) {
     return (
@@ -149,7 +145,7 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
           </CardContent>
         </Card>
       </div>
-    )
+    );
   }
 
   return (
@@ -157,11 +153,11 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
       <TabsList>
         <TabsTrigger value="control">
           <Play className="mr-2 h-4 w-4" />
-          {t('litterBox.control')}
+          {t("litterBox.control")}
         </TabsTrigger>
         <TabsTrigger value="settings">
           <Settings className="mr-2 h-4 w-4" />
-          {t('litterBox.settings')}
+          {t("litterBox.settings")}
         </TabsTrigger>
       </TabsList>
 
@@ -171,11 +167,9 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Trash2 className="h-5 w-5" />
-                {t('litterBox.quickActions')}
+                {t("litterBox.quickActions")}
               </CardTitle>
-              <CardDescription>
-                {t('litterBox.quickActionsDescription')}
-              </CardDescription>
+              <CardDescription>{t("litterBox.quickActionsDescription")}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <Button
@@ -187,12 +181,12 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
                 {cleanMutation.isPending ? (
                   <>
                     <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                    {t('litterBox.cleaning')}
+                    {t("litterBox.cleaning")}
                   </>
                 ) : (
                   <>
                     <Trash2 className="mr-2 h-5 w-5" />
-                    {t('litterBox.startCleaning')}
+                    {t("litterBox.startCleaning")}
                   </>
                 )}
               </Button>
@@ -200,7 +194,7 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
               <Separator />
 
               <div className="space-y-3">
-                <Label>{t('litterBox.cleanDelayBefore')}</Label>
+                <Label>{t("litterBox.cleanDelayBefore")}</Label>
                 <div className="flex items-center gap-4">
                   <Slider
                     value={cleanDelay}
@@ -216,22 +210,20 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
                 </div>
                 {parsedStatus?.clean_delay?.seconds && (
                   <p className="text-sm text-muted-foreground">
-                    {t('litterBox.currentValue', { value: parsedStatus.clean_delay.formatted })}
+                    {t("litterBox.currentValue", { value: parsedStatus.clean_delay.formatted })}
                   </p>
                 )}
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() =>
-                    settingsMutation.mutate({ clean_delay: cleanDelay[0] })
-                  }
+                  onClick={() => settingsMutation.mutate({ clean_delay: cleanDelay[0] })}
                   disabled={settingsMutation.isPending}
                   className="w-full"
                 >
                   {settingsMutation.isPending ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : null}
-                  {t('litterBox.applyDelay')}
+                  {t("litterBox.applyDelay")}
                 </Button>
               </div>
             </CardContent>
@@ -239,22 +231,28 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
 
           <Card>
             <CardHeader>
-              <CardTitle>{t('litterBox.litterStatus')}</CardTitle>
-              <CardDescription>{t('feeder.realtimeInfo')}</CardDescription>
+              <CardTitle>{t("litterBox.litterStatus")}</CardTitle>
+              <CardDescription>{t("feeder.realtimeInfo")}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {parsedStatus?.sensors?.litter_level && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">{t('litterBox.litterLevel')}</span>
-                    <Badge variant={parsedStatus.sensors.litter_level === 'full' ? 'success' : 'outline'}>
-                      {parsedStatus.sensors.litter_level === 'full' ? t('litterBox.filled') : parsedStatus.sensors.litter_level === 'half' ? t('litterBox.halfFilled') : parsedStatus.sensors.litter_level}
+                    <span className="text-sm font-medium">{t("litterBox.litterLevel")}</span>
+                    <Badge
+                      variant={parsedStatus.sensors.litter_level === "full" ? "success" : "outline"}
+                    >
+                      {parsedStatus.sensors.litter_level === "full"
+                        ? t("litterBox.filled")
+                        : parsedStatus.sensors.litter_level === "half"
+                          ? t("litterBox.halfFilled")
+                          : parsedStatus.sensors.litter_level}
                     </Badge>
                   </div>
-                  {parsedStatus.sensors.litter_level === 'half' && (
+                  {parsedStatus.sensors.litter_level === "half" && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <AlertTriangle className="h-4 w-4" />
-                      {t('litterBox.fillSoon')}
+                      {t("litterBox.fillSoon")}
                     </div>
                   )}
                 </div>
@@ -263,25 +261,25 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
               <Separator />
 
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">{t('common.status')}</span>
+                <span className="text-sm font-medium">{t("common.status")}</span>
                 <Badge
                   variant={
-                    parsedStatus?.system?.state === 'cleaning'
-                      ? 'default'
-                      : parsedStatus?.system?.state === 'cat_inside'
-                      ? 'secondary'
-                      : 'outline'
+                    parsedStatus?.system?.state === "cleaning"
+                      ? "default"
+                      : parsedStatus?.system?.state === "cat_inside"
+                        ? "secondary"
+                        : "outline"
                   }
                 >
-                  {parsedStatus?.system?.state === 'cleaning'
-                    ? t('litterBox.statusCleaning')
-                    : parsedStatus?.system?.state === 'cat_inside'
-                    ? t('litterBox.statusCatInside')
-                    : parsedStatus?.system?.state === 'clumping'
-                    ? t('litterBox.statusClumping')
-                    : parsedStatus?.system?.state === 'satnd_by'
-                    ? t('litterBox.statusStandby')
-                    : parsedStatus?.system?.state || t('common.unknown')}
+                  {parsedStatus?.system?.state === "cleaning"
+                    ? t("litterBox.statusCleaning")
+                    : parsedStatus?.system?.state === "cat_inside"
+                      ? t("litterBox.statusCatInside")
+                      : parsedStatus?.system?.state === "clumping"
+                        ? t("litterBox.statusClumping")
+                        : parsedStatus?.system?.state === "satnd_by"
+                          ? t("litterBox.statusStandby")
+                          : parsedStatus?.system?.state || t("common.unknown")}
                 </Badge>
               </div>
 
@@ -290,20 +288,23 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
                   <Separator />
                   <div className="flex items-center gap-2 text-destructive">
                     <AlertTriangle className="h-4 w-4" />
-                    <span className="text-sm">{t('litterBox.maintenanceRequired')}</span>
+                    <span className="text-sm">{t("litterBox.maintenanceRequired")}</span>
                   </div>
                 </>
               )}
 
-              {parsedStatus?.sensors?.fault_alarm !== 0 && parsedStatus?.sensors?.fault_alarm !== undefined && (
-                <>
-                  <Separator />
-                  <div className="flex items-center gap-2 text-destructive">
-                    <AlertTriangle className="h-4 w-4" />
-                    <span className="text-sm">{t('litterBox.faultAlarm', { code: parsedStatus.sensors.fault_alarm })}</span>
-                  </div>
-                </>
-              )}
+              {parsedStatus?.sensors?.fault_alarm !== 0 &&
+                parsedStatus?.sensors?.fault_alarm !== undefined && (
+                  <>
+                    <Separator />
+                    <div className="flex items-center gap-2 text-destructive">
+                      <AlertTriangle className="h-4 w-4" />
+                      <span className="text-sm">
+                        {t("litterBox.faultAlarm", { code: parsedStatus.sensors.fault_alarm })}
+                      </span>
+                    </div>
+                  </>
+                )}
 
               <Separator />
 
@@ -311,32 +312,29 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
                 <DialogTrigger asChild>
                   <Button variant="outline" size="sm" className="w-full">
                     <RefreshCw className="mr-2 h-4 w-4" />
-                    {t('litterBox.resetLitterLevel')}
+                    {t("litterBox.resetLitterLevel")}
                   </Button>
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>{t('litterBox.resetLitterLevelTitle')}</DialogTitle>
+                    <DialogTitle>{t("litterBox.resetLitterLevelTitle")}</DialogTitle>
                     <DialogDescription>
-                      {t('litterBox.resetLitterLevelDescription')}
+                      {t("litterBox.resetLitterLevelDescription")}
                     </DialogDescription>
                   </DialogHeader>
                   <DialogFooter>
-                    <Button
-                      variant="outline"
-                      onClick={() => setIsResetDialogOpen(false)}
-                    >
-                      {t('common.cancel')}
+                    <Button variant="outline" onClick={() => setIsResetDialogOpen(false)}>
+                      {t("common.cancel")}
                     </Button>
                     <Button
                       onClick={() => {
                         settingsMutation.mutate({
                           actions: { reset_sand_level: true },
-                        })
-                        setIsResetDialogOpen(false)
+                        });
+                        setIsResetDialogOpen(false);
                       }}
                     >
-                      {t('common.confirm')}
+                      {t("common.confirm")}
                     </Button>
                   </DialogFooter>
                 </DialogContent>
@@ -352,15 +350,13 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Moon className="h-5 w-5" />
-                {t('litterBox.nightMode')}
+                {t("litterBox.nightMode")}
               </CardTitle>
-              <CardDescription>
-                {t('litterBox.nightModeDescription')}
-              </CardDescription>
+              <CardDescription>{t("litterBox.nightModeDescription")}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center justify-between">
-                <Label>{t('litterBox.enableNightMode')}</Label>
+                <Label>{t("litterBox.enableNightMode")}</Label>
                 <Switch
                   checked={parsedStatus?.sleep_mode?.enabled ?? false}
                   onCheckedChange={(checked) =>
@@ -376,7 +372,7 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>{t('litterBox.start')}</Label>
+                  <Label>{t("litterBox.start")}</Label>
                   <Input
                     type="time"
                     value={sleepStart}
@@ -384,12 +380,12 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
                   />
                   {parsedStatus?.sleep_mode?.start_time_formatted && (
                     <p className="text-xs text-muted-foreground">
-                      {t('common.current')}: {parsedStatus.sleep_mode.start_time_formatted}
+                      {t("common.current")}: {parsedStatus.sleep_mode.start_time_formatted}
                     </p>
                   )}
                 </div>
                 <div className="space-y-2">
-                  <Label>{t('litterBox.end')}</Label>
+                  <Label>{t("litterBox.end")}</Label>
                   <Input
                     type="time"
                     value={sleepEnd}
@@ -397,7 +393,7 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
                   />
                   {parsedStatus?.sleep_mode?.end_time_formatted && (
                     <p className="text-xs text-muted-foreground">
-                      {t('common.current')}: {parsedStatus.sleep_mode.end_time_formatted}
+                      {t("common.current")}: {parsedStatus.sleep_mode.end_time_formatted}
                     </p>
                   )}
                 </div>
@@ -417,7 +413,7 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
                 disabled={settingsMutation.isPending}
                 className="w-full"
               >
-                {t('litterBox.applySchedule')}
+                {t("litterBox.applySchedule")}
               </Button>
             </CardContent>
           </Card>
@@ -426,18 +422,16 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Settings className="h-5 w-5" />
-                {t('litterBox.preferences')}
+                {t("litterBox.preferences")}
               </CardTitle>
-              <CardDescription>
-                {t('litterBox.preferencesDescription')}
-              </CardDescription>
+              <CardDescription>{t("litterBox.preferencesDescription")}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Child Lock */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Lock className="h-4 w-4 text-muted-foreground" />
-                  <Label>{t('litterBox.childLock')}</Label>
+                  <Label>{t("litterBox.childLock")}</Label>
                 </div>
                 <Switch
                   checked={parsedStatus?.settings?.child_lock ?? false}
@@ -455,7 +449,7 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Baby className="h-4 w-4 text-muted-foreground" />
-                  <Label>{t('litterBox.kittenMode')}</Label>
+                  <Label>{t("litterBox.kittenMode")}</Label>
                 </div>
                 <Switch
                   checked={parsedStatus?.settings?.kitten_mode ?? false}
@@ -473,7 +467,7 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Lightbulb className="h-4 w-4 text-muted-foreground" />
-                  <Label>{t('litterBox.lighting')}</Label>
+                  <Label>{t("litterBox.lighting")}</Label>
                 </div>
                 <Switch
                   checked={parsedStatus?.settings?.lighting ?? false}
@@ -491,7 +485,7 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Volume2 className="h-4 w-4 text-muted-foreground" />
-                  <Label>{t('litterBox.sounds')}</Label>
+                  <Label>{t("litterBox.sounds")}</Label>
                 </div>
                 <Switch
                   checked={parsedStatus?.settings?.prompt_sound ?? false}
@@ -509,7 +503,7 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Home className="h-4 w-4 text-muted-foreground" />
-                  <Label>{t('litterBox.automaticHoming')}</Label>
+                  <Label>{t("litterBox.automaticHoming")}</Label>
                 </div>
                 <Switch
                   checked={parsedStatus?.settings?.automatic_homing ?? false}
@@ -526,5 +520,5 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
         </div>
       </TabsContent>
     </Tabs>
-  )
+  );
 }

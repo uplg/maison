@@ -1,25 +1,25 @@
-import { useParams, Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { useTranslation } from 'react-i18next'
-import { devicesApi } from '@/lib/api'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, Wifi, WifiOff } from 'lucide-react'
-import { FeederControl } from '@/components/devices/FeederControl'
-import { FountainControl } from '@/components/devices/FountainControl'
-import { LitterBoxControl } from '@/components/devices/LitterBoxControl'
+import { useParams, Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { devicesApi } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+import { ArrowLeft, Wifi, WifiOff } from "lucide-react";
+import { FeederControl } from "@/components/devices/FeederControl";
+import { FountainControl } from "@/components/devices/FountainControl";
+import { LitterBoxControl } from "@/components/devices/LitterBoxControl";
 
 export function DevicePage() {
-  const { t } = useTranslation()
-  const { deviceId } = useParams<{ deviceId: string }>()
+  const { t } = useTranslation();
+  const { deviceId } = useParams<{ deviceId: string }>();
 
   const { data: devicesData, isLoading: isLoadingDevices } = useQuery({
-    queryKey: ['devices'],
+    queryKey: ["devices"],
     queryFn: devicesApi.list,
-  })
+  });
 
-  const device = devicesData?.devices.find((d) => d.id === deviceId)
+  const device = devicesData?.devices.find((d) => d.id === deviceId);
 
   if (isLoadingDevices) {
     return (
@@ -30,24 +30,22 @@ export function DevicePage() {
         </div>
         <Skeleton className="h-100 w-full" />
       </div>
-    )
+    );
   }
 
   if (!device) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <p className="text-lg font-medium">{t('device.notFound')}</p>
-        <p className="mt-2 text-muted-foreground">
-          {t('device.notFoundDescription')}
-        </p>
+        <p className="text-lg font-medium">{t("device.notFound")}</p>
+        <p className="mt-2 text-muted-foreground">{t("device.notFoundDescription")}</p>
         <Link to="/">
           <Button className="mt-4">
             <ArrowLeft className="mr-2 h-4 w-4" />
-            {t('device.backToDashboard')}
+            {t("device.backToDashboard")}
           </Button>
         </Link>
       </div>
-    )
+    );
   }
 
   return (
@@ -64,12 +62,12 @@ export function DevicePage() {
             {device.connected ? (
               <Badge variant="success">
                 <Wifi className="mr-1 h-3 w-3" />
-                {t('common.connected')}
+                {t("common.connected")}
               </Badge>
             ) : (
               <Badge variant="secondary">
                 <WifiOff className="mr-1 h-3 w-3" />
-                {t('common.disconnected')}
+                {t("common.disconnected")}
               </Badge>
             )}
           </h1>
@@ -79,16 +77,14 @@ export function DevicePage() {
         </div>
       </div>
 
-      {device.type === 'feeder' && <FeederControl deviceId={device.id} />}
-      {device.type === 'fountain' && <FountainControl deviceId={device.id} />}
-      {device.type === 'litter-box' && <LitterBoxControl deviceId={device.id} />}
-      {device.type === 'unknown' && (
+      {device.type === "feeder" && <FeederControl deviceId={device.id} />}
+      {device.type === "fountain" && <FountainControl deviceId={device.id} />}
+      {device.type === "litter-box" && <LitterBoxControl deviceId={device.id} />}
+      {device.type === "unknown" && (
         <div className="rounded-lg border p-8 text-center">
-          <p className="text-muted-foreground">
-            {t('device.unknownType')}
-          </p>
+          <p className="text-muted-foreground">{t("device.unknownType")}</p>
         </div>
       )}
     </div>
-  )
+  );
 }

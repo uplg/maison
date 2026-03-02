@@ -36,7 +36,9 @@
   * {
     @apply border-border;
   }
-  html, body, #root {
+  html,
+  body,
+  #root {
     @apply h-full w-full;
   }
   body {

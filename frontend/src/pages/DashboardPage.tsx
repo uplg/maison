@@ -1,21 +1,15 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
-import { useTranslation } from 'react-i18next'
-import { devicesApi, hueLampsApi, merossApi, type Device } from '@/lib/api'
-import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
-import { toast } from '@/hooks/use-toast'
-import { HueLampCard } from '@/components/devices/HueLampControl'
-import { MerossPlugCard } from '@/components/devices/MerossPlugControl'
-import { TempoCard } from '@/components/devices/TempoCard'
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { devicesApi, hueLampsApi, merossApi, type Device } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/hooks/use-toast";
+import { HueLampCard } from "@/components/devices/HueLampControl";
+import { MerossPlugCard } from "@/components/devices/MerossPlugControl";
+import { TempoCard } from "@/components/devices/TempoCard";
 import {
   Utensils,
   Droplets,
@@ -28,63 +22,63 @@ import {
   Lightbulb,
   Plug,
   Search,
-} from 'lucide-react'
+} from "lucide-react";
 
 const deviceIcons: Record<string, React.ReactNode> = {
   feeder: <Utensils className="h-8 w-8" />,
   fountain: <Droplets className="h-8 w-8" />,
-  'litter-box': <Trash2 className="h-8 w-8" />,
+  "litter-box": <Trash2 className="h-8 w-8" />,
   unknown: <Power className="h-8 w-8" />,
-}
+};
 
 const deviceColors: Record<string, string> = {
-  feeder: 'bg-orange-100 text-orange-600',
-  fountain: 'bg-blue-100 text-blue-600',
-  'litter-box': 'bg-green-100 text-green-600',
-  unknown: 'bg-gray-100 text-gray-600',
-}
+  feeder: "bg-orange-100 text-orange-600",
+  fountain: "bg-blue-100 text-blue-600",
+  "litter-box": "bg-green-100 text-green-600",
+  unknown: "bg-gray-100 text-gray-600",
+};
 
 function DeviceCard({ device }: { device: Device }) {
-  const { t } = useTranslation()
-  const queryClient = useQueryClient()
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   const connectMutation = useMutation({
     mutationFn: () => devicesApi.connect(device.id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
       toast({
-        title: t('device.connectionInitiated'),
-        description: t('device.connectionInitiatedDescription', { name: device.name }),
-      })
+        title: t("device.connectionInitiated"),
+        description: t("device.connectionInitiatedDescription", { name: device.name }),
+      });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('device.connectionFailed'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("device.connectionFailed"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
   const disconnectMutation = useMutation({
     mutationFn: () => devicesApi.disconnect(device.id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
       toast({
-        title: t('device.disconnected'),
-        description: t('device.disconnectedDescription', { name: device.name }),
-      })
+        title: t("device.disconnected"),
+        description: t("device.disconnectedDescription", { name: device.name }),
+      });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('device.disconnectionFailed'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("device.disconnectionFailed"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
-  const isLoading = connectMutation.isPending || disconnectMutation.isPending
+  const isLoading = connectMutation.isPending || disconnectMutation.isPending;
 
   return (
     <Card className="transition-shadow hover:shadow-lg">
@@ -102,20 +96,18 @@ function DeviceCard({ device }: { device: Device }) {
             {device.connected ? (
               <Badge variant="success" className="ml-2">
                 <Wifi className="mr-1 h-3 w-3" />
-                {t('common.connected')}
+                {t("common.connected")}
               </Badge>
             ) : (
               <Badge variant="secondary" className="ml-2">
                 <WifiOff className="mr-1 h-3 w-3" />
-                {t('common.disconnected')}
+                {t("common.disconnected")}
               </Badge>
             )}
           </CardTitle>
           <CardDescription>
             {device.product_name || device.type}
-            {device.ip && (
-              <span className="ml-2 font-mono text-xs">({device.ip})</span>
-            )}
+            {device.ip && <span className="ml-2 font-mono text-xs">({device.ip})</span>}
           </CardDescription>
         </div>
       </CardHeader>
@@ -123,7 +115,7 @@ function DeviceCard({ device }: { device: Device }) {
         <div className="flex gap-2">
           <Link to={`/device/${device.id}`} className="flex-1">
             <Button variant="default" className="w-full">
-              {t('common.manage')}
+              {t("common.manage")}
             </Button>
           </Link>
           {device.connected ? (
@@ -139,11 +131,7 @@ function DeviceCard({ device }: { device: Device }) {
               )}
             </Button>
           ) : (
-            <Button
-              variant="outline"
-              onClick={() => connectMutation.mutate()}
-              disabled={isLoading}
-            >
+            <Button variant="outline" onClick={() => connectMutation.mutate()} disabled={isLoading}>
               {isLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -154,7 +142,7 @@ function DeviceCard({ device }: { device: Device }) {
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 function DeviceCardSkeleton() {
@@ -174,112 +162,112 @@ function DeviceCardSkeleton() {
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 export function DashboardPage() {
-  const { t } = useTranslation()
-  const queryClient = useQueryClient()
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['devices'],
+    queryKey: ["devices"],
     queryFn: devicesApi.list,
     refetchInterval: 10000, // Refresh every 10 seconds
-  })
+  });
 
   // Hue lamps query
   const { data: hueLampsData, isLoading: isLoadingHueLamps } = useQuery({
-    queryKey: ['hue-lamps'],
+    queryKey: ["hue-lamps"],
     queryFn: hueLampsApi.list,
     refetchInterval: 5000, // Refresh every 5 seconds for lamps
-  })
+  });
 
   // Hue lamps stats (to check if disabled)
   const { data: hueLampsStats } = useQuery({
-    queryKey: ['hue-lamps-stats'],
+    queryKey: ["hue-lamps-stats"],
     queryFn: hueLampsApi.stats,
     staleTime: 60000, // Cache for 1 minute
-  })
+  });
 
   // Check if Hue lamps are disabled (Docker mode)
-  const isHueDisabled = hueLampsStats?.disabled === true
+  const isHueDisabled = hueLampsStats?.disabled === true;
 
   // Meross plugs query
   const { data: merossPlugsData, isLoading: isLoadingMeross } = useQuery({
-    queryKey: ['meross-plugs'],
+    queryKey: ["meross-plugs"],
     queryFn: merossApi.list,
     refetchInterval: 5000,
-  })
+  });
 
   const connectAllMutation = useMutation({
     mutationFn: devicesApi.connectAll,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
       toast({
-        title: t('dashboard.globalConnection'),
-        description: t('dashboard.globalConnectionDescription'),
-      })
+        title: t("dashboard.globalConnection"),
+        description: t("dashboard.globalConnectionDescription"),
+      });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('device.connectionFailed'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("device.connectionFailed"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
   const disconnectAllMutation = useMutation({
     mutationFn: devicesApi.disconnectAll,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
       toast({
-        title: t('dashboard.globalDisconnection'),
-        description: t('dashboard.globalDisconnectionDescription'),
-      })
+        title: t("dashboard.globalDisconnection"),
+        description: t("dashboard.globalDisconnectionDescription"),
+      });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('device.disconnectionFailed'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("device.disconnectionFailed"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
   // Hue lamps scan mutation
   const scanHueLampsMutation = useMutation({
     mutationFn: hueLampsApi.scan,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['hue-lamps'] })
+      queryClient.invalidateQueries({ queryKey: ["hue-lamps"] });
       toast({
-        title: t('hueLamps.scanStarted'),
-        description: t('hueLamps.scanStartedDescription'),
-      })
+        title: t("hueLamps.scanStarted"),
+        description: t("hueLamps.scanStartedDescription"),
+      });
     },
     onError: (error) => {
       toast({
-        title: t('common.error'),
-        description: error instanceof Error ? error.message : t('hueLamps.scanFailed'),
-        variant: 'destructive',
-      })
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("hueLamps.scanFailed"),
+        variant: "destructive",
+      });
     },
-  })
+  });
 
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <p className="text-destructive">{t('dashboard.loadingError')}</p>
+        <p className="text-destructive">{t("dashboard.loadingError")}</p>
         <Button
           variant="outline"
           className="mt-4"
-          onClick={() => queryClient.invalidateQueries({ queryKey: ['devices'] })}
+          onClick={() => queryClient.invalidateQueries({ queryKey: ["devices"] })}
         >
           <RefreshCw className="mr-2 h-4 w-4" />
-          {t('common.retry')}
+          {t("common.retry")}
         </Button>
       </div>
-    )
+    );
   }
 
   return (
@@ -287,21 +275,19 @@ export function DashboardPage() {
       <TempoCard />
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">{t('dashboard.title')}</h1>
-          <p className="text-muted-foreground text-sm sm:text-base">
-            {t('dashboard.subtitle')}
-          </p>
+          <h1 className="text-2xl sm:text-3xl font-bold">{t("dashboard.title")}</h1>
+          <p className="text-muted-foreground text-sm sm:text-base">{t("dashboard.subtitle")}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
             size="sm"
-            onClick={() => queryClient.invalidateQueries({ queryKey: ['devices'] })}
+            onClick={() => queryClient.invalidateQueries({ queryKey: ["devices"] })}
             disabled={isLoading}
             className="flex-1 sm:flex-none"
           >
-            <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-            {t('common.refresh')}
+            <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+            {t("common.refresh")}
           </Button>
           <Button
             variant="default"
@@ -315,8 +301,8 @@ export function DashboardPage() {
             ) : (
               <Wifi className="mr-2 h-4 w-4" />
             )}
-            <span className="hidden xs:inline">{t('dashboard.connectAll')}</span>
-            <span className="xs:hidden">{t('common.connect')}</span>
+            <span className="hidden xs:inline">{t("dashboard.connectAll")}</span>
+            <span className="xs:hidden">{t("common.connect")}</span>
           </Button>
           <Button
             variant="secondary"
@@ -330,8 +316,8 @@ export function DashboardPage() {
             ) : (
               <WifiOff className="mr-2 h-4 w-4" />
             )}
-            <span className="hidden xs:inline">{t('dashboard.disconnectAll')}</span>
-            <span className="xs:hidden">{t('common.disconnect')}</span>
+            <span className="hidden xs:inline">{t("dashboard.disconnectAll")}</span>
+            <span className="xs:hidden">{t("common.disconnect")}</span>
           </Button>
         </div>
       </div>
@@ -350,70 +336,33 @@ export function DashboardPage() {
         </div>
       ) : (
         <Card className="p-12 text-center">
-          <p className="text-muted-foreground">{t('dashboard.noDevices')}</p>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {t('dashboard.noDevicesHint')}
-          </p>
+          <p className="text-muted-foreground">{t("dashboard.noDevices")}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{t("dashboard.noDevicesHint")}</p>
         </Card>
       )}
 
       {data?.devices && data.devices.length > 0 && (
         <div className="text-center text-sm text-muted-foreground">
-          {t('dashboard.deviceCount', { count: data.total })}
+          {t("dashboard.deviceCount", { count: data.total })}
         </div>
       )}
 
       {/* Hue Lamps Section - Hidden in Docker mode */}
       {!isHueDisabled && (
-      <div className="mt-8 space-y-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-yellow-100 text-yellow-600">
-              <Lightbulb className="h-5 w-5" />
+        <div className="mt-8 space-y-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-yellow-100 text-yellow-600">
+                <Lightbulb className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold">{t("hueLamps.title")}</h2>
+                <p className="text-sm text-muted-foreground">{t("hueLamps.subtitle")}</p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-xl font-bold">{t('hueLamps.title')}</h2>
-              <p className="text-sm text-muted-foreground">
-                {t('hueLamps.subtitle')}
-              </p>
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => scanHueLampsMutation.mutate()}
-            disabled={scanHueLampsMutation.isPending}
-          >
-            {scanHueLampsMutation.isPending ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Search className="mr-2 h-4 w-4" />
-            )}
-            {t('hueLamps.scan')}
-          </Button>
-        </div>
-
-        {isLoadingHueLamps ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            <Skeleton className="h-40" />
-            <Skeleton className="h-40" />
-          </div>
-        ) : hueLampsData?.lamps && hueLampsData.lamps.length > 0 ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {hueLampsData.lamps.map((lamp) => (
-              <HueLampCard key={lamp.id} lamp={lamp} />
-            ))}
-          </div>
-        ) : (
-          <Card className="p-8 text-center">
-            <Lightbulb className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
-            <p className="mt-4 text-muted-foreground">{t('hueLamps.noLamps')}</p>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {t('hueLamps.noLampsHint')}
-            </p>
             <Button
               variant="outline"
-              className="mt-4"
+              size="sm"
               onClick={() => scanHueLampsMutation.mutate()}
               disabled={scanHueLampsMutation.isPending}
             >
@@ -422,18 +371,49 @@ export function DashboardPage() {
               ) : (
                 <Search className="mr-2 h-4 w-4" />
               )}
-              {t('hueLamps.scanForLamps')}
+              {t("hueLamps.scan")}
             </Button>
-          </Card>
-        )}
-
-        {hueLampsData?.lamps && hueLampsData.lamps.length > 0 && (
-          <div className="text-center text-sm text-muted-foreground">
-            {t('hueLamps.lampCount', { count: hueLampsData.total })} • 
-            {t('hueLamps.connectedCount', { count: hueLampsData.connected })}
           </div>
-        )}
-      </div>
+
+          {isLoadingHueLamps ? (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <Skeleton className="h-40" />
+              <Skeleton className="h-40" />
+            </div>
+          ) : hueLampsData?.lamps && hueLampsData.lamps.length > 0 ? (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {hueLampsData.lamps.map((lamp) => (
+                <HueLampCard key={lamp.id} lamp={lamp} />
+              ))}
+            </div>
+          ) : (
+            <Card className="p-8 text-center">
+              <Lightbulb className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
+              <p className="mt-4 text-muted-foreground">{t("hueLamps.noLamps")}</p>
+              <p className="mt-2 text-sm text-muted-foreground">{t("hueLamps.noLampsHint")}</p>
+              <Button
+                variant="outline"
+                className="mt-4"
+                onClick={() => scanHueLampsMutation.mutate()}
+                disabled={scanHueLampsMutation.isPending}
+              >
+                {scanHueLampsMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Search className="mr-2 h-4 w-4" />
+                )}
+                {t("hueLamps.scanForLamps")}
+              </Button>
+            </Card>
+          )}
+
+          {hueLampsData?.lamps && hueLampsData.lamps.length > 0 && (
+            <div className="text-center text-sm text-muted-foreground">
+              {t("hueLamps.lampCount", { count: hueLampsData.total })} •
+              {t("hueLamps.connectedCount", { count: hueLampsData.connected })}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Meross Smart Plugs Section */}
@@ -443,10 +423,8 @@ export function DashboardPage() {
             <Plug className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-xl font-bold">{t('meross.title')}</h2>
-            <p className="text-sm text-muted-foreground">
-              {t('meross.subtitle')}
-            </p>
+            <h2 className="text-xl font-bold">{t("meross.title")}</h2>
+            <p className="text-sm text-muted-foreground">{t("meross.subtitle")}</p>
           </div>
         </div>
 
@@ -464,17 +442,19 @@ export function DashboardPage() {
         ) : (
           <Card className="p-8 text-center">
             <Plug className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
-            <p className="mt-4 text-muted-foreground">{t('meross.notFound')}</p>
+            <p className="mt-4 text-muted-foreground">{t("meross.notFound")}</p>
           </Card>
         )}
 
         {merossPlugsData?.devices && merossPlugsData.devices.length > 0 && (
           <div className="text-center text-sm text-muted-foreground">
-            {t('meross.plugCount', { count: merossPlugsData.total })} • 
-            {t('meross.onlineCount', { count: merossPlugsData.devices.filter((d) => d.isOnline).length })}
+            {t("meross.plugCount", { count: merossPlugsData.total })} •
+            {t("meross.onlineCount", {
+              count: merossPlugsData.devices.filter((d) => d.isOnline).length,
+            })}
           </div>
         )}
       </div>
     </div>
-  )
+  );
 }

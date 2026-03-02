@@ -2,7 +2,7 @@
 
 A full-stack application for monitoring and controlling Tuya-based smart cat devices locally. 
 
-Built with **Elysia** (backend) and **React** (frontend), it provides comprehensive device management for smart feeders, fountains, and automatic litter boxes, Hue lamps through BLE.
+Built with **Elysia** (backend) and **React** (frontend), it provides comprehensive device management for smart feeders, fountains, automatic litter boxes, Hue lamps through BLE, Meross smart plugs, and EDF Tempo electricity pricing.
 
 Concept: A custom "home assistant" without the overhead.
 
@@ -61,6 +61,24 @@ Concept: A custom "home assistant" without the overhead.
 
 > **Note**: Hue Bluetooth requires running the backend locally (not in Docker). See [Hybrid Mode](#hybrid-mode-with-bluetooth) below.
 
+### Meross Smart Plugs (MSS310)
+
+- **100% Local Control**: Direct HTTP communication with MSS310 plugs on your LAN (no Meross cloud)
+- **Power Toggle**: Turn plugs on/off from the dashboard or detail page
+- **Real-time Electricity**: Live voltage (V), current (mA) and power (W) readings, polled every 5 seconds
+- **Consumption History**: Daily energy consumption over the last 30 days (kWh)
+- **DND Mode**: Toggle the LED indicator on the plug
+- **Device Info**: Hardware version, firmware, MAC address, WiFi signal strength
+- **Protocol**: HTTP POST to `http://<ip>/config` with MD5-signed JSON packets (`sign = md5(messageId + key + timestamp)`)
+
+### EDF Tempo Pricing
+
+- **Daily Color Display**: Shows today's and tomorrow's Tempo color (Blue/White/Red) from the [RTE public API](https://www.services-rte.com)
+- **Tariff Rates**: Current off-peak and peak prices for each color, fetched from [data.gouv.fr](https://tabular-api.data.gouv.fr)
+- **AI Predictions**: 7-day forecast powered by a Python ML server (XGBoost model trained on RTE consumption data, weather forecasts, and regulatory constraints)
+- **Prediction Calendar**: Visual calendar showing past actual colors and upcoming predicted colors with confidence scores
+- **Regulatory Constraints**: Respects the 22 red-day and 43 white-day annual limits, weekend exclusions for red days, and seasonal rules (red only Nov-Mar)
+
 ### Advanced Diagnostics
 
 - **DPS Scanning**: Discover available device data points with configurable ranges and timeouts
@@ -71,7 +89,7 @@ Concept: A custom "home assistant" without the overhead.
 
 - [Bun](https://bun.sh) (latest version)
 - [Docker](https://docker.com) & Docker Compose (for production deployment)
-- One or more Tuya-compatible smart cat devices (feeders, fountains, litter boxes) and/or Hue lamps.
+- One or more Tuya-compatible smart cat devices (feeders, fountains, litter boxes) and/or Hue lamps and/or Meross MSS310 smart plugs.
 - Device credentials (ID, Key, IP) for each device
 
 ## Installation
@@ -153,7 +171,38 @@ Concept: A custom "home assistant" without the overhead.
    - `ip`: Local IP address of the device
    - `version`: Tuya protocol version (usually 3.4 or 3.5)
 
-5. **Environment Setup**
+4. **Meross Plug Configuration** (optional)
+
+   Create a `meross-devices.json` file in the root directory:
+
+   ```json
+   [
+     {
+       "name": "Kitchen Plug",
+       "ip": "192.168.1.113",
+       "key": "your-shared-key",
+       "uuid": "device-uuid",
+       "mac": "48:E1:E9:XX:XX:XX"
+     }
+   ]
+   ```
+
+   - `key`: The shared signing key (set during initial provisioning, same for all plugs on the same account)
+   - `uuid` / `mac`: Optional, for identification only. The plug is addressed by IP.
+
+5. **Tempo Prediction** (optional)
+
+   To enable AI-powered Tempo predictions, set up the Python prediction server:
+
+   ```bash
+   cd tempo-prediction
+   pip install -e .
+   tempo-train     # Train the model (first time only)
+   ```
+
+   The prediction server runs on port 3034 by default. The backend auto-connects to it.
+
+6. **Environment Setup**
 
    ```bash
    cp .env.example .env
@@ -169,7 +218,7 @@ Concept: A custom "home assistant" without the overhead.
    JWT_SECRET=your-super-secret-jwt-key-change-me
    ```
 
-6. **Start the development server**
+7. **Start the development server**
 
    ```bash
    # Start both backend and frontend in development mode
@@ -279,6 +328,7 @@ To install Cat Monitor as an app on iPhone/Android:
 
 - Set `API_PORT` in `.env` to change the backend port (default: 3033)
 - `devices.json` - Device configurations
+- `meross-devices.json` - Meross smart plug configurations
 - `devices-cache.json` - Cache for DPS that are not readable (only usable after a modification / event received)
 - `users.json` - Users credentials (copy from `users.json.template`)
 - `hue-lamps.json` - Hue lamps identifier if connected
@@ -334,11 +384,14 @@ The API includes comprehensive logging. Check the console output for:
 | Layer    | Technology                              |
 | -------- | --------------------------------------- |
 | Backend  | Elysia, Bun, TuyAPI, @stoprocent/noble  |
-| Frontend | React 19, Vite, TailwindCSS, TypeScript |
+| Frontend | React 19, Vite 7, TailwindCSS, TypeScript |
 | UI       | Radix UI, Lucide Icons                  |
 | State    | TanStack Query (React Query)            |
 | i18n     | i18next                                 |
 | Routing  | React Router v7                         |
+| Linting  | oxlint                                  |
+| Formatting | oxfmt                                 |
+| ML       | Python, XGBoost (Tempo predictions)     |
 | Deploy   | Docker, nginx                           |
 ```
 

@@ -1,17 +1,17 @@
-import { useState } from 'react'
-import { Outlet, Link, useLocation } from 'react-router-dom'
-import { useTranslation } from 'react-i18next'
-import { useAuth } from '@/contexts/AuthContext'
-import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
-import { LanguageSwitcher } from '@/components/LanguageSwitcher'
-import { Cat, Home, LogOut, Settings, Menu, X } from 'lucide-react'
+import { useState } from "react";
+import { Outlet, Link, useLocation } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { Cat, Home, LogOut, Settings, Menu, X } from "lucide-react";
 
 export function Layout() {
-  const { t } = useTranslation()
-  const { user, logout } = useAuth()
-  const location = useLocation()
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const { t } = useTranslation();
+  const { user, logout } = useAuth();
+  const location = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -24,12 +24,9 @@ export function Layout() {
 
           <nav className="ml-6 hidden items-center gap-4 md:flex">
             <Link to="/">
-              <Button
-                variant={location.pathname === '/' ? 'secondary' : 'ghost'}
-                size="sm"
-              >
+              <Button variant={location.pathname === "/" ? "secondary" : "ghost"} size="sm">
                 <Home className="mr-2 h-4 w-4" />
-                {t('layout.dashboard')}
+                {t("layout.dashboard")}
               </Button>
             </Link>
           </nav>
@@ -39,14 +36,12 @@ export function Layout() {
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Settings className="h-4 w-4" />
               <span>{user?.username}</span>
-              <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                {user?.role}
-              </span>
+              <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{user?.role}</span>
             </div>
             <Separator orientation="vertical" className="h-6" />
             <Button variant="ghost" size="sm" onClick={logout}>
               <LogOut className="mr-2 h-4 w-4" />
-              {t('auth.logout')}
+              {t("auth.logout")}
             </Button>
           </div>
 
@@ -66,41 +61,36 @@ export function Layout() {
         {mobileMenuOpen && (
           <div className="border-t bg-background md:hidden">
             <div className="container py-4 space-y-4">
-              <Link
-                to="/"
-                onClick={() => setMobileMenuOpen(false)}
-              >
+              <Link to="/" onClick={() => setMobileMenuOpen(false)}>
                 <Button
-                  variant={location.pathname === '/' ? 'secondary' : 'ghost'}
+                  variant={location.pathname === "/" ? "secondary" : "ghost"}
                   size="sm"
                   className="w-full justify-start"
                 >
                   <Home className="mr-2 h-4 w-4" />
-                  {t('layout.dashboard')}
+                  {t("layout.dashboard")}
                 </Button>
               </Link>
-              
+
               <Separator />
-              
+
               <div className="flex items-center gap-2 text-sm text-muted-foreground px-3">
                 <Settings className="h-4 w-4" />
                 <span>{user?.username}</span>
-                <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                  {user?.role}
-                </span>
+                <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{user?.role}</span>
               </div>
-              
+
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  logout()
-                  setMobileMenuOpen(false)
+                  logout();
+                  setMobileMenuOpen(false);
                 }}
                 className="w-full justify-start text-destructive hover:text-destructive"
               >
                 <LogOut className="mr-2 h-4 w-4" />
-                {t('auth.logout')}
+                {t("auth.logout")}
               </Button>
             </div>
           </div>
@@ -113,9 +103,9 @@ export function Layout() {
 
       <footer className="border-t py-4">
         <div className="container text-center text-sm text-muted-foreground">
-          {t('layout.footer', { year: new Date().getFullYear() })}
+          {t("layout.footer", { year: new Date().getFullYear() })}
         </div>
       </footer>
     </div>
-  )
+  );
 }
