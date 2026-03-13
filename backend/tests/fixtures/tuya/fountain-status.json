@@ -1,0 +1,37 @@
+{
+  "status": 200,
+  "body": {
+    "device": {
+      "id": "bf855a2e493e0257b1mebx",
+      "name": "Pixi Smart Fountain"
+    },
+    "message": "Fountain status retrieved successfully",
+    "parsed_status": {
+      "eco_mode": 1,
+      "eco_watering_status": true,
+      "filter_life": 17790,
+      "low_water": false,
+      "mac_address": "192.168.1.44",
+      "no_water": false,
+      "power": true,
+      "pump_time": 17790,
+      "uv": true,
+      "uv_runtime": 0,
+      "water_level": "level_3"
+    },
+    "raw_dps": {
+      "1": true,
+      "10": true,
+      "101": false,
+      "102": 1,
+      "103": true,
+      "104": false,
+      "11": 0,
+      "12": "level_3",
+      "130": "192.168.1.44",
+      "4": 17790,
+      "5": 17790
+    },
+    "success": true
+  }
+}

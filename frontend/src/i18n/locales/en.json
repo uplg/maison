@@ -38,11 +38,16 @@
   },
   "layout": {
     "dashboard": "Dashboard",
+    "climate": "Climate",
     "footer": "🐱 Uplg © {{year}}"
   },
   "dashboard": {
     "title": "Dashboard",
-    "subtitle": "Manage all your connected devices for your cat 🐱",
+    "subtitle": "Manage all your connected devices",
+    "homeSubtitle": "Quick access to the useful controls across the house.",
+    "devicesSection": "Devices",
+    "tuyaSection": "Tuya devices",
+    "tuyaSubtitle": "Your tuya devices controlled locally.",
     "connectAll": "Connect all",
     "disconnectAll": "Disconnect all",
     "globalConnection": "Global connection",
@@ -308,6 +313,23 @@
     "onlineCount_one": "{{count}} online",
     "onlineCount_other": "{{count}} online"
   },
+  "climate": {
+    "title": "Climate console",
+    "subtitle": "Simple remote for your Mitsubishi through the Broadlink RM4 Pro.",
+    "pageIntro": "The dashboard and this page show your learned RM4 Pro commands directly.",
+    "simpleDescription": "A clear, compact, local remote.",
+    "dashboardTitle": "Climate",
+    "dashboardSubtitle": "RM4 Pro remote for the Mitsubishi AC.",
+    "remoteConnected": "RM4 Pro connected",
+    "searchingTitle": "Looking for the RM4 Pro",
+    "searchingDescription": "Automatic discovery on the local network...",
+    "noRemoteTitle": "No remote found on the network",
+    "noRemoteDescription": "Make sure the RM4 Pro is powered on and on the same Wi-Fi network.",
+    "noCommands": "No saved Mitsubishi commands found.",
+    "commandSent": "Command sent",
+    "commandSentDescription": "Scene {{command}} was sent through Broadlink remote {{host}}.",
+    "commandFailed": "Unable to send command"
+  },
   "tempo": {
     "title": "Tempo EDF",
     "subtitle": "Daily electricity pricing",
@@ -334,8 +356,10 @@
     "prediction": {
       "title": "Tempo Predictions",
       "subtitle": "7-day AI forecast for EDF Tempo colors",
+      "dashboardTitle": "Upcoming forecast",
       "weekForecast": "Week Forecast",
       "confidence": "Confidence",
+      "confidenceShort": "{{value}}%",
       "season": "Season",
       "redDays": "Red days",
       "whiteDays": "White days",

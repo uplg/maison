@@ -97,7 +97,7 @@ export function Layout() {
         )}
       </header>
 
-      <main className="flex-1 container py-6">
+      <main className="flex-1 container py-2">
         <Outlet />
       </main>
 

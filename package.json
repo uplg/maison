@@ -1,45 +1,15 @@
 {
-  "name": "home-monitor",
-  "version": "1.0.0",
+  "name": "cat-monitor",
   "private": true,
-  "description": "Control your Tuya-based cat (IoT) devices locally using an API",
-  "type": "module",
+  "description": "Host-run Rust backend with Vite frontend and simple Docker helpers",
   "scripts": {
-    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "dev:backend": "bun --watch src/index.ts",
-    "dev:frontend": "cd frontend && bun run dev",
-    "start": "bun src/index.ts",
-    "build": "bun build src/index.ts --compile --outfile server",
-    "build:frontend": "cd frontend && bun run build",
-    "lint": "oxlint src/",
-    "format": "oxfmt --write src/",
-    "format:check": "oxfmt --check src/"
-  },
-  "keywords": [
-    "tuya",
-    "catit",
-    "smart-feeder",
-    "smart-litter-box",
-    "hono",
-    "api"
-  ],
-  "author": "Uplg",
-  "license": "MIT",
-  "dependencies": {
-    "@elysiajs/cors": "^1.4.1",
-    "@elysiajs/jwt": "^1.4.1",
-    "@elysiajs/openapi": "^1.4.14",
-    "@stoprocent/noble": "^2.3.16",
-    "dotenv": "^17.3.1",
-    "elysia": "^1.4.27",
-    "tuyapi": "^7.7.1",
-    "typescript": "^5.9.3"
-  },
-  "devDependencies": {
-    "@types/node": "^22.19.13",
-    "bun-types": "1.3.10",
-    "concurrently": "^9.2.1",
-    "oxlint": "^1.2.0",
-    "oxfmt": "^0.36.0"
+    "backend": "cargo run --manifest-path backend/Cargo.toml",
+    "backend:dev": "cargo run --manifest-path backend/Cargo.toml",
+    "frontend:dev": "bun --cwd frontend run dev",
+    "frontend:build": "bun --cwd frontend run build",
+    "compose:up": "docker compose up -d --build frontend mqtt",
+    "compose:down": "docker compose down",
+    "tunnel:up": "docker compose --profile tunnel up -d cloudflared",
+    "tunnel:down": "docker compose --profile tunnel stop cloudflared"
   }
 }

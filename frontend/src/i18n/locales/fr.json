@@ -38,11 +38,16 @@
   },
   "layout": {
     "dashboard": "Dashboard",
+    "climate": "Climatisation",
     "footer": "🐱 Uplg © {{year}}"
   },
   "dashboard": {
     "title": "Dashboard",
-    "subtitle": "Gérez tous vos appareils connectés pour votre chat 🐱",
+    "subtitle": "Gérez tous vos appareils connectés",
+    "homeSubtitle": "Accès rapide aux commandes utiles de la maison.",
+    "devicesSection": "Appareils",
+    "tuyaSection": "Appareils Tuya",
+    "tuyaSubtitle": "Vos appareils Tuya pilotés en local.",
     "connectAll": "Tout connecter",
     "disconnectAll": "Tout déconnecter",
     "globalConnection": "Connexion globale",
@@ -308,6 +313,23 @@
     "onlineCount_one": "{{count}} en ligne",
     "onlineCount_other": "{{count}} en ligne"
   },
+  "climate": {
+    "title": "Console clim",
+    "subtitle": "Télécommande simple pour votre Mitsubishi via le Broadlink RM4 Pro.",
+    "pageIntro": "Le dashboard et cette page affichent directement les commandes apprises du RM4 Pro.",
+    "simpleDescription": "Une télécommande claire, compacte et locale.",
+    "dashboardTitle": "Climatisation",
+    "dashboardSubtitle": "Télécommande du RM4 Pro pour la clim Mitsubishi.",
+    "remoteConnected": "RM4 Pro connecté",
+    "searchingTitle": "Recherche du RM4 Pro",
+    "searchingDescription": "Découverte automatique sur le réseau local...",
+    "noRemoteTitle": "Aucune télécommande sur le réseau",
+    "noRemoteDescription": "Vérifiez que le RM4 Pro est allumé et sur le même réseau Wi-Fi.",
+    "noCommands": "Aucune commande Mitsubishi sauvegardée.",
+    "commandSent": "Commande envoyée",
+    "commandSentDescription": "La scène {{command}} a été transmise au RM4 Pro {{host}}.",
+    "commandFailed": "Impossible d'envoyer la commande"
+  },
   "tempo": {
     "title": "Tempo EDF",
     "subtitle": "Tarification électrique du jour",
@@ -334,8 +356,10 @@
     "prediction": {
       "title": "Prédictions Tempo",
       "subtitle": "Prévisions IA sur 7 jours des couleurs Tempo EDF",
+      "dashboardTitle": "Prévisions à venir",
       "weekForecast": "Prévisions de la semaine",
       "confidence": "Confiance",
+      "confidenceShort": "{{value}} %",
       "season": "Saison",
       "redDays": "Jours rouges",
       "whiteDays": "Jours blancs",

@@ -2,8 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { tempoApi } from "@/lib/api";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DashboardSectionHeader } from "@/components/dashboard/DashboardSectionHeader";
 import { Zap, Calendar, ArrowRight, Euro, TrendingUp } from "lucide-react";
 
 type TempoColor = "BLUE" | "WHITE" | "RED" | null;
@@ -72,25 +73,27 @@ function ColorBadge({
 
 function TempoSkeleton() {
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <Card className="border-0 bg-transparent shadow-none">
+      <CardHeader className="px-0 pb-2">
         <div className="flex items-center gap-2">
           <Skeleton className="h-8 w-8 rounded-lg" />
           <Skeleton className="h-5 w-24" />
         </div>
       </CardHeader>
-      <CardContent>
-        <div className="flex items-center justify-center gap-4">
-          <div className="flex flex-col items-center gap-1">
-            <Skeleton className="h-3 w-12" />
-            <Skeleton className="h-12 w-12 rounded-full" />
-            <Skeleton className="h-3 w-10" />
-          </div>
-          <Skeleton className="h-4 w-4" />
-          <div className="flex flex-col items-center gap-1">
-            <Skeleton className="h-3 w-12" />
-            <Skeleton className="h-12 w-12 rounded-full" />
-            <Skeleton className="h-3 w-10" />
+      <CardContent className="px-0">
+        <div className="rounded-2xl bg-white/80 px-4 py-4 shadow-sm">
+          <div className="flex items-center justify-center gap-4">
+            <div className="flex flex-col items-center gap-1">
+              <Skeleton className="h-3 w-12" />
+              <Skeleton className="h-12 w-12 rounded-full" />
+              <Skeleton className="h-3 w-10" />
+            </div>
+            <Skeleton className="h-4 w-4" />
+            <div className="flex flex-col items-center gap-1">
+              <Skeleton className="h-3 w-12" />
+              <Skeleton className="h-12 w-12 rounded-full" />
+              <Skeleton className="h-3 w-10" />
+            </div>
           </div>
         </div>
       </CardContent>
@@ -166,48 +169,93 @@ export function TempoCard() {
   };
 
   const currentTarif = getCurrentTarif();
+  const dashboardPredictions =
+    predictionsData?.predictions?.filter((prediction) => {
+      const predictionDate = new Date(`${prediction.date}T00:00:00`);
+      const tomorrow = new Date();
+      tomorrow.setHours(0, 0, 0, 0);
+      tomorrow.setDate(tomorrow.getDate() + 2);
+      return predictionDate >= tomorrow;
+    }).slice(0, 4) ?? [];
 
   return (
-    <Card className="border-l-4 border-l-yellow-500">
-      <CardHeader className="pb-2">
-        <CardTitle
-          className="flex items-center gap-2 text-base cursor-pointer hover:text-yellow-600 transition-colors group"
-          onClick={() => navigate("/tempo-predictions")}
-        >
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-yellow-100 text-yellow-600">
-            <Calendar className="h-4 w-4" />
-          </div>
-          <span className="flex-1">{t("tempo.title")}</span>
-          <TrendingUp className="h-4 w-4 text-muted-foreground group-hover:text-yellow-600 transition-colors" />
-        </CardTitle>
+    <Card className="border-0 bg-transparent shadow-none">
+      <CardHeader className="px-0 pb-1">
+        <DashboardSectionHeader
+          icon={<Calendar className="h-5 w-5" />}
+          iconClassName="bg-yellow-100 text-yellow-600"
+          title={
+            <button
+              type="button"
+              className="group flex items-center gap-2 text-left transition-colors hover:text-yellow-600"
+              onClick={() => navigate("/tempo-predictions")}
+            >
+              <span>{t("tempo.title")}</span>
+              <TrendingUp className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-yellow-600" />
+            </button>
+          }
+          description={t("tempo.subtitle")}
+        />
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 px-0 pb-0">
         {/* Colors section */}
-        <div className="flex items-center justify-center gap-6">
-          <ColorBadge
-            color={displayTodayColor}
-            label={`${t("tempo.today")} ${formatDate(data.today?.date)}`}
-            isPrediction={isTodayPrediction}
-          />
-          <ArrowRight className="h-4 w-4 text-muted-foreground" />
-          <ColorBadge
-            color={displayTomorrowColor}
-            label={`${t("tempo.tomorrow")} ${formatDate(data.tomorrow?.date)}`}
-            isPrediction={isTomorrowPrediction}
-          />
+        <div className="rounded-2xl bg-white/80 px-4 py-4 shadow-sm">
+          <div className="flex items-center justify-center gap-6">
+            <ColorBadge
+              color={displayTodayColor}
+              label={`${t("tempo.today")} ${formatDate(data.today?.date)}`}
+              isPrediction={isTodayPrediction}
+            />
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
+            <ColorBadge
+              color={displayTomorrowColor}
+              label={`${t("tempo.tomorrow")} ${formatDate(data.tomorrow?.date)}`}
+              isPrediction={isTomorrowPrediction}
+            />
+          </div>
+
+          {(isTodayPrediction || isTomorrowPrediction) && (
+            <p className="mt-3 text-center text-xs text-muted-foreground">
+              * {t("tempo.predictionNotice")}
+            </p>
+          )}
         </div>
 
-        {/* Prediction notice */}
-        {(isTodayPrediction || isTomorrowPrediction) && (
-          <p className="text-center text-xs text-muted-foreground">
-            * {t("tempo.predictionNotice")}
-          </p>
+        {dashboardPredictions.length > 0 && (
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700">
+              <TrendingUp className="h-4 w-4" />
+              {t("tempo.prediction.dashboardTitle")}
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {dashboardPredictions.map((prediction) => {
+                const color = prediction.predicted_color as TempoColor;
+                const styles = color ? colorStyles[color] : null;
+                return (
+                  <div
+                    key={prediction.date}
+                    className={`rounded-xl p-2 text-center ${styles?.light ?? "bg-white text-slate-700"}`}
+                  >
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                      {formatDate(prediction.date)}
+                    </div>
+                    <div className="mt-1 text-sm font-semibold">
+                      {color ? t(`tempo.colors.${color.toLowerCase()}`) : t("tempo.unknown")}
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      {t("tempo.prediction.confidenceShort", { value: Math.round(prediction.confidence * 100) })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         )}
 
         {/* Current tariff section */}
         {currentTarif && displayTodayColor && (
           <div
-            className={`rounded-lg p-3 ${colorStyles[displayTodayColor]?.light || "bg-gray-50"}`}
+            className={`rounded-2xl p-4 ${colorStyles[displayTodayColor]?.light || "bg-gray-50"}`}
           >
             <div className="flex items-center justify-center gap-2 mb-2">
               <Euro className="h-4 w-4" />
@@ -233,7 +281,7 @@ export function TempoCard() {
 
         {/* All tariffs summary */}
         {data.tarifs && (
-          <div className="text-xs text-muted-foreground">
+          <div className="rounded-2xl bg-slate-50 px-4 py-3 text-xs text-muted-foreground">
             <details className="cursor-pointer">
               <summary className="flex items-center gap-1 hover:text-foreground">
                 {t("tempo.allTarifs")}

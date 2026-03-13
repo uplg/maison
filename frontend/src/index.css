@@ -36,13 +36,24 @@
   * {
     @apply border-border;
   }
+  html {
+    font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+  }
   html,
   body,
   #root {
     @apply h-full w-full;
   }
   body {
-    @apply bg-background text-foreground antialiased;
+    background:
+      radial-gradient(circle at top left, hsl(190 75% 88% / 0.65), transparent 26%),
+      radial-gradient(circle at 85% 15%, hsl(42 100% 88% / 0.55), transparent 22%),
+      linear-gradient(180deg, hsl(40 35% 98%), hsl(210 30% 98%));
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+    background-size: 100% 100%, 100% 100%, 100% 100%;
+    min-height: 100vh;
+    @apply text-foreground antialiased;
   }
 }
 

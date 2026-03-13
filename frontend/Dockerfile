@@ -17,8 +17,8 @@ RUN apk add --no-cache gettext
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 
-# Default backend URL (Docker network) - will be overridden by docker-compose
-ENV BACKEND_URL=backend:3033
+# Default backend URL points to the host Rust backend
+ENV BACKEND_URL=host.docker.internal:3033
 
 EXPOSE 80
 

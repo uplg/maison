@@ -1,0 +1,24 @@
+{
+  "base_consumption": 46050,
+  "thermosensitivity": 600,
+  "temp_reference": 12.0,
+  "weekend_factor": 0.92,
+  "renewable_factor": 0.12,
+  "calibration_date": "2026-03-02",
+  "calibration_accuracy": 0.8838480459141842,
+  "calibration_red_recall": 0.7731481481481481,
+  "monthly_adjustments": {
+    "1": 0.98,
+    "2": 0.97,
+    "3": 0.93,
+    "4": 0.88,
+    "5": 0.83,
+    "6": 0.8,
+    "7": 0.78,
+    "8": 0.8,
+    "9": 0.85,
+    "10": 0.9,
+    "11": 0.95,
+    "12": 0.97
+  }
+}

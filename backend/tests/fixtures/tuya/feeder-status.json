@@ -1,0 +1,7 @@
+{
+  "status": 500,
+  "body": {
+    "error": "Failed to get status from Pixi Smart Feeder after 2 attempts: Status request timeout for Pixi Smart Feeder",
+    "success": false
+  }
+}

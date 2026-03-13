@@ -1,0 +1,61 @@
+{
+  "status": 200,
+  "body": {
+    "device": {
+      "id": "bfe88591a492929ab380tm",
+      "name": "Cat Litter Box"
+    },
+    "message": "Litter box status retrieved successfully",
+    "parsed_status": {
+      "clean_delay": {
+        "formatted": "2:00",
+        "seconds": 120
+      },
+      "sensors": {
+        "defecation_duration": 7,
+        "defecation_frequency": 1,
+        "fault_alarm": 0,
+        "litter_level": "full"
+      },
+      "settings": {
+        "automatic_homing": true,
+        "child_lock": false,
+        "kitten_mode": false,
+        "lighting": true,
+        "prompt_sound": true
+      },
+      "sleep_mode": {
+        "enabled": true,
+        "end_time_formatted": "09:00",
+        "end_time_minutes": 540,
+        "start_time_formatted": "23:00",
+        "start_time_minutes": 1380
+      },
+      "system": {
+        "cleaning_in_progress": false,
+        "maintenance_required": false,
+        "state": "cleaning"
+      }
+    },
+    "raw_dps": {
+      "101": 120,
+      "102": true,
+      "103": 1380,
+      "104": 540,
+      "105": 1,
+      "106": 7,
+      "107": false,
+      "108": false,
+      "109": "cleaning",
+      "110": false,
+      "111": false,
+      "112": "full",
+      "113": true,
+      "114": 0,
+      "116": true,
+      "117": true,
+      "119": true
+    },
+    "success": true
+  }
+}

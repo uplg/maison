@@ -1,237 +1,104 @@
-.PHONY: help dev backend-local backend-stop docker-up docker-down docker-build logs stop mqtt-certs mqtt-up mqtt-down
+.PHONY: help backend backend-start backend-stop frontend frontend-build compose-up compose-down tunnel-up tunnel-down start stop status
 
-# Colors
-GREEN  := $(shell tput -Txterm setaf 2)
-YELLOW := $(shell tput -Txterm setaf 3)
-RESET  := $(shell tput -Txterm sgr0)
+LOG_DIR := logs
+BACKEND_LOG := $(LOG_DIR)/backend.log
+BACKEND_PID := .backend.pid
+API_PORT ?= $(shell grep -E '^(API_PORT|PORT)=' .env 2>/dev/null | tail -n1 | cut -d'=' -f2 || echo 3033)
+PUBLIC_HOSTNAME ?= $(shell grep -E '^CLOUDFLARE_PUBLIC_HOSTNAME=' .env 2>/dev/null | cut -d'=' -f2)
 
-# Load API_PORT from .env if exists, default to 3033
-API_PORT ?= $(shell grep -E '^API_PORT=' .env 2>/dev/null | cut -d'=' -f2 || echo 3033)
+help:
+	@printf "Targets:\n"
+	@printf "  make backend         Run the Rust backend on the host in foreground\n"
+	@printf "  make backend-start   Start the Rust backend on the host in background\n"
+	@printf "  make backend-stop    Stop the host backend\n"
+	@printf "  make frontend        Run the frontend dev server\n"
+	@printf "  make frontend-build  Build the frontend\n"
+	@printf "  make compose-up      Start frontend + mosquitto with Docker\n"
+	@printf "  make compose-down    Stop Docker services\n"
+	@printf "  make tunnel-up       Start the Cloudflare tunnel\n"
+	@printf "  make tunnel-down     Stop the Cloudflare tunnel\n"
+	@printf "  make start          Start backend + frontend + mosquitto + tunnel\n"
+	@printf "  make stop           Stop backend + frontend + mosquitto + tunnel\n"
+	@printf "  make status         Show current service status\n"
 
-help: ## Show this help
-	@echo 'Usage:'
-	@echo '  ${YELLOW}make${RESET} ${GREEN}<target>${RESET}'
-	@echo ''
-	@echo 'Targets:'
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  ${YELLOW}%-20s${RESET} %s\n", $$1, $$2}'
+backend:
+	cargo run --manifest-path backend/Cargo.toml
 
-# =====================
-# Local Development
-# =====================
-
-dev: ## Start backend and frontend in dev mode (foreground)
-	@echo "$(GREEN)Starting dev servers...$(RESET)"
-	bun run dev
-
-backend-local: ## Start backend locally with Bluetooth support (background, persistent)
-	@echo "$(GREEN)Starting backend with Bluetooth support...$(RESET)"
-	@mkdir -p logs
-	@if [ -f .backend.pid ] && kill -0 $$(cat .backend.pid) 2>/dev/null; then \
-		echo "$(YELLOW)Backend already running (PID: $$(cat .backend.pid))$(RESET)"; \
+backend-start:
+	@mkdir -p $(LOG_DIR)
+	@if [ -f $(BACKEND_PID) ] && kill -0 $$(cat $(BACKEND_PID)) 2>/dev/null; then \
+		printf "Backend already running (PID %s)\n" "$$(cat $(BACKEND_PID))"; \
 	else \
-		nohup bun run src/index.ts > logs/backend.log 2>&1 & echo $$! > .backend.pid; \
-		echo "$(GREEN)Backend started (PID: $$(cat .backend.pid))$(RESET)"; \
-		echo "Logs: tail -f logs/backend.log"; \
+		nohup cargo run --manifest-path backend/Cargo.toml > $(BACKEND_LOG) 2>&1 & echo $$! > $(BACKEND_PID); \
+		printf "Backend started on host (PID %s)\n" "$$(cat $(BACKEND_PID))"; \
+		printf "Backend log: %s\n" "$(BACKEND_LOG)"; \
 	fi
 
-backend-stop: ## Stop the local backend
-	@echo "$(GREEN)Stopping backend...$(RESET)"
-	@# Kill process from PID file if exists
-	@if [ -f .backend.pid ]; then \
-		PID=$$(cat .backend.pid); \
-		if kill -0 $$PID 2>/dev/null; then \
-			kill $$PID 2>/dev/null || true; \
-			echo "Stopped PID $$PID from .backend.pid"; \
-		fi; \
-		rm -f .backend.pid; \
-	fi
-	@# Kill any remaining bun processes running the backend
-	@pkill -f "bun.*src/index.ts" 2>/dev/null || true
-	@pkill -f "bun run src/index.ts" 2>/dev/null || true
-	@pkill -f "bun --watch src/index.ts" 2>/dev/null || true
-	@# Also kill any bun run dev processes (which spawn backend)
-	@pkill -f "bun run dev:backend" 2>/dev/null || true
-	@# Give processes time to die
-	@sleep 1
-	@# Force kill if still running
-	@pkill -9 -f "bun.*src/index.ts" 2>/dev/null || true
-	@echo "$(GREEN)Backend stopped$(RESET)"
-
-backend-restart: backend-stop backend-local ## Restart the local backend
-
-backend-logs: ## Tail backend logs
-	@tail -f logs/backend.log
-
-# =====================
-# Docker (without Bluetooth)
-# =====================
-
-docker-build: ## Build Docker images
-	@echo "$(GREEN)Building Docker images...$(RESET)"
-	docker-compose build
-
-docker-up: ## Start Docker containers (without Bluetooth)
-	@echo "$(GREEN)Starting Docker containers...$(RESET)"
-	@echo "$(YELLOW)Note: Bluetooth/Hue lamps disabled in Docker$(RESET)"
-	docker-compose up -d
-
-docker-down: ## Stop Docker containers
-	@echo "$(GREEN)Stopping Docker containers...$(RESET)"
-	docker-compose down
-
-docker-logs: ## Tail Docker logs
-	docker-compose logs -f
-
-# =====================
-# Hybrid Mode (recommended for Bluetooth)
-# =====================
-
-hybrid: mqtt-certs backend-local tempo-start docker-frontend-hybrid ## Start local backend + Tempo + Docker frontend + MQTT (for Bluetooth support)
-	@echo "$(GREEN)Hybrid mode started:$(RESET)"
-	@echo "  - Backend: localhost:$(API_PORT) (with Bluetooth)"
-	@echo "  - Tempo:   localhost:3034 (prediction server)"
-	@echo "  - MQTT:    localhost:8883 (Meross smart plugs)"
-	@echo "  - Frontend: localhost:80 (Docker)"
-
-docker-frontend-hybrid: ## Start only the frontend in Docker (pointing to local backend)
-	@echo "$(GREEN)Starting frontend container (hybrid mode)...$(RESET)"
-	docker-compose -f docker-compose.hybrid.yml up -d --build
-
-docker-frontend: ## Start only the frontend in Docker
-	@echo "$(GREEN)Starting frontend container only...$(RESET)"
-	docker-compose up -d frontend
-
-# =====================
-# MQTT Broker (for Meross smart plugs)
-# =====================
-
-mqtt-certs: ## Generate TLS certificates for the MQTT broker
-	@echo "$(GREEN)Generating MQTT TLS certificates...$(RESET)"
-	@chmod +x scripts/generate-mqtt-certs.sh
-	@./scripts/generate-mqtt-certs.sh
-
-mqtt-up: mqtt-certs ## Start the MQTT broker (standalone, via Docker)
-	@echo "$(GREEN)Starting MQTT broker...$(RESET)"
-	docker-compose -f docker-compose.hybrid.yml up -d mqtt
-	@echo "$(GREEN)MQTT broker running on port 8883 (TLS)$(RESET)"
-
-mqtt-down: ## Stop the MQTT broker
-	@echo "$(GREEN)Stopping MQTT broker...$(RESET)"
-	@docker stop home-monitor-mqtt 2>/dev/null || true
-	@docker rm home-monitor-mqtt 2>/dev/null || true
-	@echo "$(GREEN)MQTT broker stopped$(RESET)"
-
-# =====================
-# Utilities
-# =====================
-
-clean: backend-stop tempo-stop ## Stop everything and clean up
-	@echo "$(GREEN)Stopping all Docker containers...$(RESET)"
-	@docker-compose down 2>/dev/null || true
-	@docker-compose -f docker-compose.hybrid.yml down 2>/dev/null || true
-	@docker-compose -f docker-compose.ssl.yml down 2>/dev/null || true
-	@docker-compose -f docker-compose.hybrid.ssl.yml down 2>/dev/null || true
-	@rm -f .backend.pid .tempo.pid
-	@echo "$(GREEN)Cleaned up$(RESET)"
-
-stop: clean ## Stop all services (alias for clean)
-
-status: ## Show status of services
-	@echo "$(GREEN)=== Backend ===$(RESET)"
-	@if [ -f .backend.pid ] && kill -0 $$(cat .backend.pid) 2>/dev/null; then \
-		echo "Running (PID: $$(cat .backend.pid))"; \
+backend-stop:
+	@if [ -f $(BACKEND_PID) ] && kill -0 $$(cat $(BACKEND_PID)) 2>/dev/null; then \
+		kill $$(cat $(BACKEND_PID)) 2>/dev/null || true; \
+		printf "Stopped backend PID %s\n" "$$(cat $(BACKEND_PID))"; \
 	else \
-		echo "Not running"; \
+		printf "Backend is not running\n"; \
 	fi
-	@echo ""
-	@echo "$(GREEN)=== Tempo Prediction ===$(RESET)"
-	@if [ -f .tempo.pid ] && kill -0 $$(cat .tempo.pid) 2>/dev/null; then \
-		echo "Running (PID: $$(cat .tempo.pid))"; \
+	@rm -f $(BACKEND_PID)
+	@pkill -f "cargo run --manifest-path backend/Cargo.toml" 2>/dev/null || true
+
+frontend:
+	bun --cwd frontend run dev
+
+frontend-build:
+	bun --cwd frontend run build
+
+compose-up:
+	docker compose up -d --build frontend mqtt
+
+compose-down:
+	docker compose down
+
+tunnel-up:
+	@if [ -z "$${CLOUDFLARE_TUNNEL_TOKEN:-}" ] && ! grep -q '^CLOUDFLARE_TUNNEL_TOKEN=.' .env 2>/dev/null; then \
+		printf "Set CLOUDFLARE_TUNNEL_TOKEN in .env before starting the tunnel\n"; \
+		exit 1; \
+	fi
+	@docker compose --profile tunnel up -d cloudflared || { \
+		printf '%s\n' 'Cloudflare tunnel failed to start. Check that CLOUDFLARE_TUNNEL_TOKEN is the tunnel connector token from Cloudflare Zero Trust.'; \
+		exit 1; \
+	}
+
+tunnel-down:
+	docker compose --profile tunnel stop cloudflared
+
+start: backend-start
+	@docker compose up -d --build frontend mqtt
+	@if [ -n "$${CLOUDFLARE_TUNNEL_TOKEN:-}" ] || grep -q '^CLOUDFLARE_TUNNEL_TOKEN=.' .env 2>/dev/null; then \
+		docker compose --profile tunnel up -d cloudflared || printf '%s\n' 'Cloudflare tunnel failed to start. The token is likely invalid; keep local services running and replace CLOUDFLARE_TUNNEL_TOKEN with the connector token from your named tunnel.'; \
 	else \
-		echo "Not running"; \
+		printf '%s\n' 'Cloudflare tunnel skipped: set CLOUDFLARE_TUNNEL_TOKEN in .env to enable it'; \
 	fi
-	@echo ""
-	@echo "$(GREEN)=== Docker ===$(RESET)"
-	@docker-compose ps 2>/dev/null || echo "Docker not available"
-
-# =====================
-# Tempo Prediction Server
-# =====================
-
-tempo-start: ## Start Tempo prediction server (background)
-	@echo "$(GREEN)Starting Tempo prediction server...$(RESET)"
-	@if [ -f .tempo.pid ] && kill -0 $$(cat .tempo.pid) 2>/dev/null; then \
-		echo "$(YELLOW)Tempo server already running (PID: $$(cat .tempo.pid))$(RESET)"; \
+	@printf '\nStarted services:\n'
+	@printf '%s\n' "- Backend: http://localhost:$(API_PORT)"
+	@printf '%s\n' '- Frontend: http://localhost'
+	@printf '%s\n' '- MQTT: localhost:8883'
+	@if [ -n "$(PUBLIC_HOSTNAME)" ]; then \
+		printf '%s\n' "- Public URL: https://$(PUBLIC_HOSTNAME)"; \
 	else \
-		./scripts/start-tempo.sh && echo "Logs: tail -f logs/tempo.log"; \
+		printf '%s\n' '- Public URL: configure a Cloudflare public hostname and set CLOUDFLARE_PUBLIC_HOSTNAME in .env'; \
 	fi
 
-tempo-stop: ## Stop the Tempo prediction server
-	@echo "$(GREEN)Stopping Tempo server...$(RESET)"
-	@if [ -f .tempo.pid ]; then \
-		PID=$$(cat .tempo.pid); \
-		if kill -0 $$PID 2>/dev/null; then \
-			kill $$PID 2>/dev/null || true; \
-			echo "Stopped PID $$PID"; \
-		fi; \
-		rm -f .tempo.pid; \
+stop: backend-stop
+	@docker compose --profile tunnel down --remove-orphans
+
+status:
+	@printf "Backend: "
+	@if [ -f $(BACKEND_PID) ] && kill -0 $$(cat $(BACKEND_PID)) 2>/dev/null; then \
+		printf "running (PID %s)\n" "$$(cat $(BACKEND_PID))"; \
+	else \
+		printf "stopped\n"; \
 	fi
-	@pkill -f "tempo_prediction.server" 2>/dev/null || true
-	@# Also kill any process on port 3034 as fallback
-	@lsof -ti:3034 2>/dev/null | xargs kill -9 2>/dev/null || true
-	@echo "$(GREEN)Tempo server stopped$(RESET)"
-
-tempo-logs: ## Tail Tempo server logs
-	@tail -f logs/tempo.log
-
-# =====================
-# PWA & SSL (for mobile app access)
-# =====================
-
-ssl-certs: ## Generate SSL certificates with mkcert
-	@echo "$(GREEN)Generating SSL certificates...$(RESET)"
-	@chmod +x scripts/generate-ssl-certs.sh
-	@./scripts/generate-ssl-certs.sh
-
-ssl-icons: ## Generate PWA icons from cat.svg
-	@echo "$(GREEN)Generating PWA icons...$(RESET)"
-	@chmod +x scripts/generate-icons.sh
-	@./scripts/generate-icons.sh
-
-ssl-setup: ssl-certs ssl-icons ## Full PWA/SSL setup (certs + icons)
-	@echo "$(GREEN)PWA setup complete!$(RESET)"
-
-ssl-up: ## Start with SSL (for PWA/mobile access)
-	@echo "$(GREEN)Starting with SSL...$(RESET)"
-	@if [ ! -f scripts/ssl/cert.pem ]; then \
-		echo "$(YELLOW)SSL certificates not found. Generating...$(RESET)"; \
-		$(MAKE) ssl-certs; \
+	@if [ -n "$${CLOUDFLARE_TUNNEL_TOKEN:-}" ] || grep -q '^CLOUDFLARE_TUNNEL_TOKEN=.' .env 2>/dev/null; then \
+		docker compose ps; \
+	else \
+		docker compose ps frontend mqtt; \
+		printf "Cloudflare tunnel: not configured\n"; \
 	fi
-	docker-compose -f docker-compose.ssl.yml up -d --build
-	@echo ""
-	@echo "$(GREEN)✅ Home Monitor with SSL started!$(RESET)"
-	@echo "  - HTTP:  http://localhost (redirects to HTTPS)"
-	@echo "  - HTTPS: https://localhost"
-	@echo "  - HTTPS: https://home-monitor.local (add to /etc/hosts)"
-
-ssl-down: ## Stop SSL containers
-	docker-compose -f docker-compose.ssl.yml down
-
-ssl-logs: ## Tail SSL Docker logs
-	docker-compose -f docker-compose.ssl.yml logs -f
-
-hybrid-ssl: mqtt-certs backend-local tempo-start docker-frontend-hybrid-ssl ## Hybrid mode with SSL (Bluetooth + PWA + Tempo + MQTT)
-	@echo "$(GREEN)Hybrid SSL mode started:$(RESET)"
-	@echo "  - Backend: localhost:$(API_PORT) (with Bluetooth)"
-	@echo "  - Tempo:   localhost:3034 (prediction server)"
-	@echo "  - MQTT:    localhost:8883 (Meross smart plugs)"
-	@echo "  - Frontend: https://localhost (Docker with SSL)"
-
-docker-frontend-hybrid-ssl: ## Start frontend with SSL in Docker (hybrid mode)
-	@echo "$(GREEN)Starting frontend with SSL (hybrid mode)...$(RESET)"
-	@if [ ! -f scripts/ssl/cert.pem ]; then \
-		echo "$(YELLOW)SSL certificates not found. Generating...$(RESET)"; \
-		$(MAKE) ssl-certs; \
-	fi
-	docker-compose -f docker-compose.hybrid.ssl.yml up -d --build
-

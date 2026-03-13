@@ -1,84 +1,38 @@
-# Dependencies
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Environment variables
+# Environment
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
 
-# Logs
-logs
+# Logs and runtime state
+logs/
 *.log
-
-# Runtime data
-pids
 *.pid
-*.seed
-*.pid.lock
 
-# Coverage directory used by tools like istanbul
-coverage/
+# Frontend
+frontend/node_modules/
+frontend/dist/
 
-# nyc test coverage
-.nyc_output
+# Backend
+backend/target/
 
-# Dependency directories
+# Root tooling
 node_modules/
-jspm_packages/
 
-# Optional npm cache directory
-.npm
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# dotenv environment variables file
-.env
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-dist
-# API config
+# Runtime data kept locally
 devices.json
-server
 device-cache.json
 users.json
+meross-devices.json
 hue-lamps.json
 hue-lamps-blacklist.json
-meross-devices.json
+broadlink-codes.json
 
-# Backend local run
-.backend.pid
-logs/
-
-scripts/ssl/*
-
+# Mosquitto runtime data
 mosquitto/certs/
 mosquitto/data/
 mosquitto/log/
 
-*.pyc
-__pycache__
-tempo-prediction/cache
-tempo-prediction/.pixi/
-tempo-prediction/.venv/
-tempo-prediction/.ruff_cache/
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

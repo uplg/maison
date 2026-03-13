@@ -472,6 +472,89 @@ export const merossApi = {
     }),
 };
 
+export interface BroadlinkDevice {
+  host: string;
+  mac: string;
+  modelCode: number;
+  friendlyModel: string;
+  friendlyType: string;
+  name: string;
+  isLocked: boolean;
+  kind: string;
+  supportsLearning: boolean;
+}
+
+export interface BroadlinkCode {
+  id: string;
+  name: string;
+  brand: string | null;
+  model: string | null;
+  command: string;
+  packetBase64: string;
+  packetLength: number;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BroadlinkDiscoverResponse {
+  success: boolean;
+  devices: BroadlinkDevice[];
+  total: number;
+  message: string;
+}
+
+export interface BroadlinkCodesResponse {
+  success: boolean;
+  codes: BroadlinkCode[];
+  total: number;
+  message: string;
+}
+
+export interface BroadlinkSendResponse {
+  success: boolean;
+  result: {
+    host: string;
+    codeId?: string;
+    command?: string;
+    packetLength: number;
+  };
+  message: string;
+}
+
+export const broadlinkApi = {
+  discover: (localIp?: string, forceRefresh = false) =>
+    api<BroadlinkDiscoverResponse>(
+      `/broadlink/discover${buildBroadlinkDiscoverQuery(localIp, forceRefresh)}`,
+    ),
+
+  listCodes: () => api<BroadlinkCodesResponse>("/broadlink/codes"),
+
+  listMitsubishiCodes: (model?: string) =>
+    api<BroadlinkCodesResponse>(
+      `/broadlink/mitsubishi/codes${model ? `?model=${encodeURIComponent(model)}` : ""}`,
+    ),
+
+  sendMitsubishiCommand: (host: string, command: string, model?: string, localIp?: string) =>
+    api<BroadlinkSendResponse>("/broadlink/mitsubishi/send", {
+      method: "POST",
+      body: {
+        host,
+        command,
+        model,
+        localIp,
+      },
+    }),
+};
+
+function buildBroadlinkDiscoverQuery(localIp?: string, forceRefresh = false) {
+  const params = new URLSearchParams();
+  if (localIp) params.set("localIp", localIp);
+  if (forceRefresh) params.set("forceRefresh", "true");
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
 // Tempo types
 export interface TempoTarifs {
   blue: { hc: number; hp: number };
