@@ -57,19 +57,38 @@ pub fn router() -> Router<AppState> {
         .route("/logout", post(logout_handler))
 }
 
-pub(crate) fn load_users(config: &Config) -> Vec<User> {
-    let fallback = vec![User {
-        id: "1".to_string(),
-        username: "admin".to_string(),
-        password: "admin".to_string(),
-        role: "admin".to_string(),
-    }];
+pub(crate) fn load_users(config: &Config) -> Result<Vec<User>, AppError> {
+    let content = fs::read_to_string(&config.users_path).map_err(|error| {
+        AppError::http(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "Unable to read users file at {}: {error}",
+                config.users_path.display()
+            ),
+        )
+    })?;
 
-    let Ok(content) = fs::read_to_string(&config.users_path) else {
-        return fallback;
-    };
+    let users = serde_json::from_str::<Vec<User>>(&content).map_err(|error| {
+        AppError::http(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "Unable to parse users file at {}: {error}",
+                config.users_path.display()
+            ),
+        )
+    })?;
 
-    serde_json::from_str::<Vec<User>>(&content).unwrap_or(fallback)
+    if users.is_empty() {
+        return Err(AppError::http(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "Users file at {} does not contain any accounts",
+                config.users_path.display()
+            ),
+        ));
+    }
+
+    Ok(users)
 }
 
 async fn login_handler(

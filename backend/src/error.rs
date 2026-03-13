@@ -1,6 +1,7 @@
 use axum::{http::StatusCode, response::IntoResponse, Json};
 use serde::Serialize;
 use thiserror::Error;
+use tracing::error;
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -52,11 +53,10 @@ impl AppError {
     fn client_message(&self) -> String {
         match self {
             Self::Http { message, .. } => message.clone(),
-            Self::Io(err) => err.to_string(),
-            Self::Json(err) => err.to_string(),
-            Self::Jwt(err) => err.to_string(),
-            Self::Reqwest(err) => err.to_string(),
-            Self::Join(err) => err.to_string(),
+            Self::Io(_) | Self::Json(_) | Self::Jwt(_) | Self::Join(_) => {
+                "Internal server error".to_string()
+            }
+            Self::Reqwest(_) => "Upstream service unavailable".to_string(),
         }
     }
 }
@@ -64,6 +64,9 @@ impl AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         let status = self.status();
+        if status.is_server_error() {
+            error!(error = %self, "request failed");
+        }
         let body = ErrorBody {
             success: false,
             error: self.client_message(),

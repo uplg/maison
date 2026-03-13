@@ -23,14 +23,25 @@
     "current": "Current",
     "status": "Status"
   },
+  "branding": {
+    "name": "Maison",
+    "kicker": "Local Home Control"
+  },
   "auth": {
     "login": "Log in",
     "logout": "Log out",
     "loggingIn": "Logging in...",
     "username": "Username",
     "password": "Password",
-    "loginDescription": "Log in to manage your devices",
-    "loginSuccess": "Welcome! 🐱",
+    "loginDescription": "Secure local control for lighting, climate, plugs, and connected devices.",
+    "loginCardDescription": "Use a valid account to access your private home dashboard.",
+    "securityTitle": "Protected access",
+    "securityDescription": "Authentication is required before any device control is available.",
+    "localTitle": "Host-first runtime",
+    "localDescription": "Bluetooth and local integrations stay on the host for reliability.",
+    "accessTitle": "Private entry point",
+    "accessDescription": "Remote access goes through your private Cloudflare URL and your login.",
+    "loginSuccess": "Welcome back",
     "loginSuccessDescription": "Successfully logged in",
     "loginError": "Login error",
     "invalidCredentials": "Invalid credentials",
@@ -39,7 +50,7 @@
   "layout": {
     "dashboard": "Dashboard",
     "climate": "Climate",
-    "footer": "🐱 Uplg © {{year}}"
+    "footer": "Maison © {{year}}"
   },
   "dashboard": {
     "title": "Dashboard",

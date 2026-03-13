@@ -40,6 +40,13 @@ Main settings:
 - `CLOUDFLARED_PROTOCOL`: Cloudflare transport protocol, default `http2` for better compatibility behind Docker/NAT
 - `CLOUDFLARE_PUBLIC_HOSTNAME`: optional stable public hostname, for example `cat-monitor.example.com`
 
+## Security notes
+
+- `JWT_SECRET` must be set to a strong unique value; the backend now refuses to start with the default secret.
+- `users.json` must exist and contain at least one account; the backend no longer falls back to a default admin/admin account.
+- Browser access is expected through the frontend only; permissive backend CORS has been removed.
+- The frontend proxy now adds security headers and rate-limits `POST /api/auth/login`.
+
 ## Run locally
 
 Start the backend on the host:

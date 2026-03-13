@@ -19,7 +19,7 @@ use routes::auth::{load_users, SharedUsers};
 use meross::MerossManager;
 use tempo::TempoService;
 use tuya::TuyaManager;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::trace::TraceLayer;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -48,7 +48,7 @@ pub fn build_app_from_config(config: Arc<Config>) -> Result<Router, AppError> {
 }
 
 pub fn build_app_parts_from_config(config: Arc<Config>) -> Result<(Router, AppState), AppError> {
-    let users = Arc::new(load_users(&config));
+    let users = Arc::new(load_users(&config)?);
     let broadlink = BroadlinkManager::new(&config.broadlink_codes_path)?;
     let hue = HueManager::new(config.as_ref())?;
     let meross = MerossManager::new(&config.meross_devices_path)?;
@@ -95,12 +95,22 @@ pub fn build_app(state: AppState) -> Router {
     Router::<AppState>::new()
         .merge(routes::root::router())
         .nest("/api", api_router)
-        .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
 impl AppState {
+    pub fn validate_runtime_security(&self) -> Result<(), AppError> {
+        if self.config.jwt_secret == "super-secret-cat-key-change-me" {
+            return Err(AppError::http(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Refusing to start with the default JWT secret. Set JWT_SECRET in .env.",
+            ));
+        }
+
+        Ok(())
+    }
+
     pub async fn shutdown(&self) {
         self.hue.shutdown().await;
     }

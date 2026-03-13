@@ -10,6 +10,9 @@ async fn main() {
     init_tracing();
 
     let (app, state) = app_parts_from_env().expect("failed to build app");
+    state
+        .validate_runtime_security()
+        .expect("insecure runtime configuration");
     let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = std::env::var("PORT")
         .ok()

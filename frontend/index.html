@@ -6,36 +6,22 @@
     
     <!-- PWA Meta Tags -->
     <meta name="theme-color" content="#3b82f6" />
-    <meta name="description" content="Home monitoring" />
+    <meta name="description" content="Secure local home control" />
     
     <!-- iOS PWA support -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Home Monitor" />
+    <meta name="apple-mobile-web-app-title" content="Home monitor" />
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
     
     <!-- Favicon & Icons -->
-    <link rel="icon" type="image/svg+xml" href="/cat.svg" />
+    <link rel="icon" type="image/svg+xml" href="/brand.svg" />
     <link rel="manifest" href="/manifest.json" />
-    
-    <title>Home Monitor</title>
+
+    <title>Home monitor</title>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
-    <script>
-      // Enregistrement du Service Worker
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then((registration) => {
-              console.log('SW registered:', registration.scope);
-            })
-            .catch((error) => {
-              console.log('SW registration failed:', error);
-            });
-        });
-      }
-    </script>
   </body>
 </html>

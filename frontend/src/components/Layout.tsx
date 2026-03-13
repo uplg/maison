@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
-import { Cat, Home, LogOut, Settings, Menu, X } from "lucide-react";
+import { House, Home, LogOut, Settings, Menu, X } from "lucide-react";
 
 export function Layout() {
   const { t } = useTranslation();
@@ -18,8 +18,8 @@ export function Layout() {
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
         <div className="container flex h-14 items-center">
           <Link to="/" className="flex items-center gap-2 font-semibold">
-            <Cat className="h-6 w-6 text-primary" />
-            <span className="hidden xs:inline">Home Monitor</span>
+            <House className="h-6 w-6 text-primary" />
+            <span className="hidden xs:inline">Maison</span>
           </Link>
 
           <nav className="ml-6 hidden items-center gap-4 md:flex">
