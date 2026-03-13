@@ -1,11 +1,9 @@
-# Cat Monitor
+# Home Monitor
 
-Cat Monitor now exposes only two app components:
+Exposes only two app components:
 
 - `frontend/`: the current Vite/React frontend
 - `backend/`: the Rust backend
-
-The old Bun/TypeScript backend, backend container, hybrid SSL setup, and Python Tempo service are removed.
 
 ## Runtime files kept in place
 
