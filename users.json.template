@@ -2,7 +2,7 @@
   {
     "id": "1",
     "username": "admin",
-    "password": "catadmin123",
+    "password_hash": "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRmb3J0ZW1wbGF0ZQ$gD/3t3t0KpV6v5j2m3w4rKpiw4mQG8Yv7m0l+NC8QwY",
     "role": "admin"
   }
 ]

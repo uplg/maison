@@ -5,6 +5,10 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub jwt_secret: String,
+    pub auth_cookie_name: String,
+    pub auth_cookie_secure: bool,
+    pub auth_rate_limit_attempts: u32,
+    pub auth_rate_limit_window_seconds: i64,
     pub disable_bluetooth: bool,
     pub source_root: PathBuf,
     pub users_path: PathBuf,
@@ -59,6 +63,28 @@ impl Config {
             })
             .unwrap_or(false);
 
+        let auth_cookie_name =
+            env::var("AUTH_COOKIE_NAME").unwrap_or_else(|_| "maison_session".to_string());
+
+        let auth_cookie_secure = env::var("AUTH_COOKIE_SECURE")
+            .map(|value| {
+                matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(true);
+
+        let auth_rate_limit_attempts = env::var("AUTH_RATE_LIMIT_ATTEMPTS")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(10);
+
+        let auth_rate_limit_window_seconds = env::var("AUTH_RATE_LIMIT_WINDOW_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(300);
+
         let port = env::var("PORT")
             .ok()
             .or_else(|| env::var("API_PORT").ok())
@@ -73,6 +99,10 @@ impl Config {
             host,
             port,
             jwt_secret,
+            auth_cookie_name,
+            auth_cookie_secure,
+            auth_rate_limit_attempts,
+            auth_rate_limit_window_seconds,
             disable_bluetooth,
             source_root,
             users_path,

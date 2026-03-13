@@ -1,11 +1,32 @@
+use std::{collections::HashMap, sync::Arc};
+
 use axum::{
     extract::{FromRef, FromRequestParts},
     http::{header::AUTHORIZATION, request::Parts, HeaderMap, StatusCode},
 };
+use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 
 use crate::{error::AppError, AppState};
+
+#[derive(Clone, Default)]
+pub struct AuthRateLimiter {
+    inner: Arc<Mutex<HashMap<String, RateLimitEntry>>>,
+}
+
+#[derive(Debug, Clone)]
+struct RateLimitEntry {
+    window_started_at: chrono::DateTime<Utc>,
+    attempts: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AuthRateLimitStatus {
+    pub allowed: bool,
+    pub attempts: u32,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
@@ -45,7 +66,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let app_state = AppState::from_ref(state);
-        let token = extract_bearer_token(&parts.headers).map_err(|_| {
+        let token = extract_auth_token(&parts.headers, &app_state.config.auth_cookie_name).map_err(|_| {
             AppError::http(
                 StatusCode::UNAUTHORIZED,
                 "Authentication required. Please provide a valid Bearer token.",
@@ -57,6 +78,10 @@ where
 
         Ok(Self(decoded.claims.into()))
     }
+}
+
+pub fn extract_auth_token<'a>(headers: &'a HeaderMap, cookie_name: &str) -> Result<&'a str, AppError> {
+    extract_bearer_token(headers).or_else(|_| extract_cookie_token(headers, cookie_name))
 }
 
 pub fn extract_bearer_token(headers: &HeaderMap) -> Result<&str, AppError> {
@@ -74,4 +99,44 @@ pub fn decode_token(
     secret: &[u8],
 ) -> Result<jsonwebtoken::TokenData<Claims>, jsonwebtoken::errors::Error> {
     decode::<Claims>(token, &DecodingKey::from_secret(secret), &Validation::default())
+}
+
+fn extract_cookie_token<'a>(headers: &'a HeaderMap, cookie_name: &str) -> Result<&'a str, AppError> {
+    let cookie_header = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| AppError::unauthorized("No token provided"))?;
+
+    cookie_header
+        .split(';')
+        .filter_map(|cookie| cookie.trim().split_once('='))
+        .find_map(|(name, value)| (name == cookie_name).then_some(value))
+        .ok_or_else(|| AppError::unauthorized("No token provided"))
+}
+
+impl AuthRateLimiter {
+    pub async fn check(&self, key: &str, max_attempts: u32, window: Duration) -> AuthRateLimitStatus {
+        let now = Utc::now();
+        let mut entries = self.inner.lock().await;
+        let entry = entries.entry(key.to_string()).or_insert(RateLimitEntry {
+            window_started_at: now,
+            attempts: 0,
+        });
+
+        if now - entry.window_started_at >= window {
+            entry.window_started_at = now;
+            entry.attempts = 0;
+        }
+
+        entry.attempts = entry.attempts.saturating_add(1);
+
+        AuthRateLimitStatus {
+            allowed: entry.attempts <= max_attempts,
+            attempts: entry.attempts,
+        }
+    }
+
+    pub async fn reset(&self, key: &str) {
+        self.inner.lock().await.remove(key);
+    }
 }

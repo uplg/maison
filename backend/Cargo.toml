@@ -8,7 +8,9 @@ default-run = "cat-monitor-rust-backend"
 live-runtime-tests = []
 
 [dependencies]
+argon2 = "0.5.3"
 axum = "0.8.8"
+axum-extra = { version = "0.10.3", features = ["cookie"] }
 base64 = "0.22.1"
 btleplug = "0.12.0"
 chrono = { version = "0.4.44", features = ["clock", "serde"] }
@@ -23,6 +25,7 @@ rust-async-tuyapi = "1.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 thiserror = "2.0.18"
+time = "0.3.47"
 tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread", "signal", "net", "sync", "time"] }
 tower-http = { version = "0.6.8", features = ["cors", "trace"] }
 tracing = "0.1.44"

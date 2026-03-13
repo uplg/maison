@@ -1,4 +1,4 @@
-# Home Monitor
+# Maison
 
 Exposes only two app components:
 
@@ -36,6 +36,10 @@ Main settings:
 - `PORT` / `API_PORT`: Rust backend port, default `3033`
 - `JWT_SECRET`: auth signing secret
 - `DISABLE_BLUETOOTH`: set `true` to disable Hue BLE support
+- `AUTH_COOKIE_NAME`: session cookie name
+- `AUTH_COOKIE_SECURE`: keep `true` when the app is exposed through HTTPS/Cloudflare
+- `AUTH_RATE_LIMIT_ATTEMPTS`: max failed login attempts per IP+username window
+- `AUTH_RATE_LIMIT_WINDOW_SECONDS`: backend login throttling window
 - `CLOUDFLARE_TUNNEL_TOKEN`: optional token for the Cloudflare tunnel profile
 - `CLOUDFLARED_PROTOCOL`: Cloudflare transport protocol, default `http2` for better compatibility behind Docker/NAT
 - `CLOUDFLARE_PUBLIC_HOSTNAME`: optional stable public hostname, for example `cat-monitor.example.com`
@@ -43,9 +47,17 @@ Main settings:
 ## Security notes
 
 - `JWT_SECRET` must be set to a strong unique value; the backend now refuses to start with the default secret.
-- `users.json` must exist and contain at least one account; the backend no longer falls back to a default admin/admin account.
+- `users.json` must exist and contain at least one account with `password_hash`; plaintext passwords are refused.
 - Browser access is expected through the frontend only; permissive backend CORS has been removed.
-- The frontend proxy now adds security headers and rate-limits `POST /api/auth/login`.
+- Auth now uses an `HttpOnly` cookie instead of storing the session token in `localStorage`.
+- Login throttling now also happens inside the backend, not only at the edge.
+- Simple audit logs are emitted for login success, failure, and rate-limit hits.
+
+To generate a password hash for `users.json`:
+
+```bash
+cargo run --manifest-path backend/Cargo.toml --bin hash_password -- 'your-password'
+```
 
 ## Run locally
 

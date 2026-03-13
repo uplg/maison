@@ -6,20 +6,15 @@ interface ApiOptions {
 }
 
 export async function api<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
-  const token = localStorage.getItem("token");
-
   const headers: HeadersInit = {
     "Content-Type": "application/json",
   };
-
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
 
   const response = await fetch(`${API_BASE}${endpoint}`, {
     method: options.method || "GET",
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
+    credentials: "same-origin",
   });
 
   const data = await response.json();
@@ -34,7 +29,6 @@ export async function api<T>(endpoint: string, options: ApiOptions = {}): Promis
 // Auth API
 export interface LoginResponse {
   success: boolean;
-  token: string;
   user: {
     id: string;
     username: string;

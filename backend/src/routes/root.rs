@@ -26,9 +26,9 @@ pub fn router() -> Router<AppState> {
 
 async fn root_handler() -> Json<RootResponse> {
     Json(RootResponse {
-        message: "Cat API (Rust rewrite)",
+        message: "Home API",
         version: "0.1.0",
-        description: "Rust rewrite of the home monitor backend",
+        description: "Maison backend",
         endpoints: vec![
             "GET /",
             "GET /health",

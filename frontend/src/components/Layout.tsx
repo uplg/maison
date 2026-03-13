@@ -25,7 +25,6 @@ export function Layout() {
           <nav className="ml-6 hidden items-center gap-4 md:flex">
             <Link to="/">
               <Button variant={location.pathname === "/" ? "secondary" : "ghost"} size="sm">
-                <Home className="mr-2 h-4 w-4" />
                 {t("layout.dashboard")}
               </Button>
             </Link>

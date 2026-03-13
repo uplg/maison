@@ -28,11 +28,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const { isLoading } = useQuery({
     queryKey: ["auth", "verify"],
     queryFn: async () => {
-      const token = localStorage.getItem("token");
-      if (!token) {
-        return null;
-      }
-
       try {
         const response = await authApi.verify();
         if (response.success && response.user) {
@@ -40,7 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return response.user;
         }
       } catch {
-        localStorage.removeItem("token");
+        setUser(null);
       }
       return null;
     },
@@ -52,7 +47,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (username: string, password: string) => {
       const response = await authApi.login(username, password);
       if (response.success) {
-        localStorage.setItem("token", response.token);
         setUser(response.user);
         navigate("/");
       }
@@ -61,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    localStorage.removeItem("token");
+    void authApi.logout().catch(() => undefined);
     setUser(null);
     queryClient.clear();
     navigate("/login");

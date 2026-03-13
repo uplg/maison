@@ -11,6 +11,7 @@ pub mod tuya;
 use std::sync::Arc;
 
 use axum::Router;
+use auth::AuthRateLimiter;
 use broadlink::BroadlinkManager;
 use config::Config;
 use error::AppError;
@@ -25,6 +26,7 @@ use tower_http::trace::TraceLayer;
 pub struct AppState {
     pub(crate) config: Arc<Config>,
     pub(crate) users: SharedUsers,
+    pub(crate) auth_rate_limiter: AuthRateLimiter,
     pub(crate) broadlink: BroadlinkManager,
     pub(crate) hue: HueManager,
     pub(crate) meross: MerossManager,
@@ -49,6 +51,7 @@ pub fn build_app_from_config(config: Arc<Config>) -> Result<Router, AppError> {
 
 pub fn build_app_parts_from_config(config: Arc<Config>) -> Result<(Router, AppState), AppError> {
     let users = Arc::new(load_users(&config)?);
+    let auth_rate_limiter = AuthRateLimiter::default();
     let broadlink = BroadlinkManager::new(&config.broadlink_codes_path)?;
     let hue = HueManager::new(config.as_ref())?;
     let meross = MerossManager::new(&config.meross_devices_path)?;
@@ -58,6 +61,7 @@ pub fn build_app_parts_from_config(config: Arc<Config>) -> Result<(Router, AppSt
     let state = AppState {
         config,
         users,
+        auth_rate_limiter,
         broadlink,
         hue,
         meross,

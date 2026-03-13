@@ -1,24 +1,38 @@
 use std::{fs, sync::Arc};
 
+use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
-    extract::State,
-    http::StatusCode,
-    routing::post,
     Json, Router,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    routing::post,
 };
+use axum_extra::extract::cookie::{Cookie, SameSite};
 use chrono::{Duration, Utc};
-use jsonwebtoken::{encode, EncodingKey, Header};
+use jsonwebtoken::{EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
+use time::Duration as CookieDuration;
+use tracing::{info, warn};
 
 use crate::{
-    auth::{decode_token, extract_bearer_token, AuthUser, Claims},
+    AppState,
+    auth::{AuthUser, Claims, decode_token, extract_auth_token},
     config::Config,
     error::AppError,
-    AppState,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct User {
+    id: String,
+    username: String,
+    password_hash: String,
+    role: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct LegacyUser {
     id: String,
     username: String,
     password: String,
@@ -34,7 +48,6 @@ struct LoginRequest {
 #[derive(Debug, Serialize)]
 struct LoginResponse {
     success: bool,
-    token: String,
     user: AuthUser,
 }
 
@@ -68,38 +81,96 @@ pub(crate) fn load_users(config: &Config) -> Result<Vec<User>, AppError> {
         )
     })?;
 
-    let users = serde_json::from_str::<Vec<User>>(&content).map_err(|error| {
-        AppError::http(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "Unable to parse users file at {}: {error}",
-                config.users_path.display()
-            ),
-        )
-    })?;
+    if let Ok(users) = serde_json::from_str::<Vec<User>>(&content) {
+        if users.is_empty() {
+            return Err(AppError::http(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!(
+                    "Users file at {} does not contain any accounts",
+                    config.users_path.display()
+                ),
+            ));
+        }
 
-    if users.is_empty() {
+        return Ok(users);
+    }
+
+    if serde_json::from_str::<Vec<LegacyUser>>(&content).is_ok() {
         return Err(AppError::http(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!(
-                "Users file at {} does not contain any accounts",
+                "Users file at {} still uses plaintext passwords. Rehash them before starting the app.",
                 config.users_path.display()
             ),
         ));
     }
 
-    Ok(users)
+    Err(AppError::http(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!(
+            "Unable to parse users file at {}. Expected password_hash entries.",
+            config.users_path.display()
+        ),
+    ))
 }
 
 async fn login_handler(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(body): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, AppError> {
+) -> Result<impl IntoResponse, AppError> {
+    let remote_ip = client_ip(&headers);
+    let limiter_key = format!("{remote_ip}:{}", body.username.trim().to_ascii_lowercase());
+    let rate_limit = state
+        .auth_rate_limiter
+        .check(
+            &limiter_key,
+            state.config.auth_rate_limit_attempts,
+            Duration::seconds(state.config.auth_rate_limit_window_seconds),
+        )
+        .await;
+
+    if !rate_limit.allowed {
+        warn!(
+            username = %body.username,
+            remote_ip = %remote_ip,
+            attempts = rate_limit.attempts,
+            "auth login rate limit exceeded"
+        );
+        return Err(AppError::http(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many login attempts. Please wait before retrying.",
+        ));
+    }
+
     let user = state
         .users
         .iter()
-        .find(|user| user.username == body.username && user.password == body.password)
-        .ok_or_else(|| AppError::http(StatusCode::UNAUTHORIZED, "Invalid username or password"))?;
+        .find(|user| user.username == body.username)
+        .ok_or_else(|| {
+            warn!(username = %body.username, remote_ip = %remote_ip, "auth login failed");
+            AppError::http(StatusCode::UNAUTHORIZED, "Invalid username or password")
+        })?;
+
+    let parsed_hash = PasswordHash::new(&user.password_hash).map_err(|_| {
+        AppError::http(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Stored password hash for user {} is invalid", user.username),
+        )
+    })?;
+
+    if Argon2::default()
+        .verify_password(body.password.as_bytes(), &parsed_hash)
+        .is_err()
+    {
+        warn!(username = %body.username, remote_ip = %remote_ip, "auth login failed");
+        return Err(AppError::http(
+            StatusCode::UNAUTHORIZED,
+            "Invalid username or password",
+        ));
+    }
+
+    state.auth_rate_limiter.reset(&limiter_key).await;
 
     let expiration = Utc::now() + Duration::days(7);
     let claims = Claims {
@@ -115,22 +186,34 @@ async fn login_handler(
         &EncodingKey::from_secret(state.config.jwt_secret.as_bytes()),
     )?;
 
-    Ok(Json(LoginResponse {
-        success: true,
-        token,
-        user: AuthUser {
-            id: user.id.clone(),
-            username: user.username.clone(),
-            role: user.role.clone(),
-        },
-    }))
+    let cookie = Cookie::build((state.config.auth_cookie_name.clone(), token))
+        .http_only(true)
+        .secure(state.config.auth_cookie_secure)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(CookieDuration::days(7))
+        .build();
+
+    info!(username = %user.username, remote_ip = %remote_ip, "auth login succeeded");
+
+    Ok((
+        [(axum::http::header::SET_COOKIE, cookie.to_string())],
+        Json(LoginResponse {
+            success: true,
+            user: AuthUser {
+                id: user.id.clone(),
+                username: user.username.clone(),
+                role: user.role.clone(),
+            },
+        }),
+    ))
 }
 
 async fn verify_handler(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
 ) -> Result<Json<VerifyResponse>, AppError> {
-    let token = extract_bearer_token(&headers)?;
+    let token = extract_auth_token(&headers, &state.config.auth_cookie_name)?;
     let decoded = decode_token(token, state.config.jwt_secret.as_bytes())
         .map_err(|_| AppError::http(StatusCode::UNAUTHORIZED, "Invalid token"))?;
 
@@ -140,11 +223,33 @@ async fn verify_handler(
     }))
 }
 
-async fn logout_handler() -> Json<LogoutResponse> {
-    Json(LogoutResponse {
-        success: true,
-        message: "Logged out successfully",
-    })
+async fn logout_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let cookie = Cookie::build((state.config.auth_cookie_name.clone(), String::new()))
+        .http_only(true)
+        .secure(state.config.auth_cookie_secure)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(CookieDuration::seconds(0))
+        .build();
+
+    (
+        [(axum::http::header::SET_COOKIE, cookie.to_string())],
+        Json(LogoutResponse {
+            success: true,
+            message: "Logged out successfully",
+        }),
+    )
 }
 
 pub(crate) type SharedUsers = Arc<Vec<User>>;
+
+fn client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .or_else(|| headers.get("x-real-ip").and_then(|value| value.to_str().ok()))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}

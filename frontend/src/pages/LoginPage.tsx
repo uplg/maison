@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/hooks/use-toast";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
-import { House, Loader2, LockKeyhole, Radio, ShieldCheck } from "lucide-react";
+import { House, Loader2 } from "lucide-react";
 
 export function LoginPage() {
   const { t } = useTranslation();
@@ -48,94 +48,59 @@ export function LoginPage() {
       <div className="absolute top-4 right-4">
         <LanguageSwitcher />
       </div>
-      <div className="relative w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/70 bg-white/85 shadow-[0_32px_100px_-36px_rgba(15,23,42,0.35)] backdrop-blur">
-        <div className="grid lg:grid-cols-[1.1fr_0.9fr]">
-          <div className="border-b border-slate-200/80 p-8 lg:border-r lg:border-b-0 lg:p-12">
-            <div className="mb-8 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-lg shadow-slate-900/15">
-              <House className="h-7 w-7" />
-            </div>
-            <div className="space-y-4">
-              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">
-                {t("branding.kicker")}
-              </p>
-              <h1 className="max-w-md text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl">
-                {t("branding.name")}
-              </h1>
-              <p className="max-w-xl text-base leading-7 text-slate-600 sm:text-lg">
-                {t("auth.loginDescription")}
-              </p>
-            </div>
-            <div className="mt-10 grid gap-4 sm:grid-cols-3">
-              <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-4">
-                <ShieldCheck className="mb-3 h-5 w-5 text-slate-900" />
-                <p className="text-sm font-medium text-slate-950">{t("auth.securityTitle")}</p>
-                <p className="mt-1 text-sm text-slate-500">{t("auth.securityDescription")}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-4">
-                <Radio className="mb-3 h-5 w-5 text-slate-900" />
-                <p className="text-sm font-medium text-slate-950">{t("auth.localTitle")}</p>
-                <p className="mt-1 text-sm text-slate-500">{t("auth.localDescription")}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-4">
-                <LockKeyhole className="mb-3 h-5 w-5 text-slate-900" />
-                <p className="text-sm font-medium text-slate-950">{t("auth.accessTitle")}</p>
-                <p className="mt-1 text-sm text-slate-500">{t("auth.accessDescription")}</p>
-              </div>
-            </div>
+      <Card className="relative w-full max-w-md border-white/70 bg-white/88 shadow-[0_32px_100px_-36px_rgba(15,23,42,0.35)] backdrop-blur">
+        <CardHeader className="space-y-4 px-8 pt-8 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-lg shadow-slate-900/15">
+            <House className="h-7 w-7" />
           </div>
-
-          <div className="p-6 sm:p-8 lg:p-12">
-            <Card className="border-slate-200/80 bg-white shadow-none">
-              <CardHeader className="space-y-2 text-left">
-                <CardTitle className="text-2xl tracking-[-0.03em] text-slate-950">{t("auth.login")}</CardTitle>
-                <CardDescription>{t("auth.loginCardDescription")}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="username">{t("auth.username")}</Label>
-                    <Input
-                      id="username"
-                      type="text"
-                      placeholder="admin"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      required
-                      autoComplete="username"
-                      disabled={isLoading}
-                      className="h-11 border-slate-200 bg-slate-50/70"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="password">{t("auth.password")}</Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      autoComplete="current-password"
-                      disabled={isLoading}
-                      className="h-11 border-slate-200 bg-slate-50/70"
-                    />
-                  </div>
-                  <Button type="submit" className="h-11 w-full bg-slate-950 text-white hover:bg-slate-800" disabled={isLoading}>
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        {t("auth.loggingIn")}
-                      </>
-                    ) : (
-                      t("auth.login")
-                    )}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
+          <div className="space-y-2">
+            <CardTitle className="text-3xl tracking-[-0.04em] text-slate-950">{t("branding.name")}</CardTitle>
+            <CardDescription className="text-sm text-slate-500">{t("auth.loginDescription")}</CardDescription>
           </div>
-        </div>
-      </div>
+        </CardHeader>
+        <CardContent className="px-8 pb-8">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="username">{t("auth.username")}</Label>
+              <Input
+                id="username"
+                type="text"
+                placeholder="admin"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+                autoComplete="username"
+                disabled={isLoading}
+                className="h-11 border-slate-200 bg-slate-50/70"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">{t("auth.password")}</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                disabled={isLoading}
+                className="h-11 border-slate-200 bg-slate-50/70"
+              />
+            </div>
+            <Button type="submit" className="h-11 w-full bg-slate-950 text-white hover:bg-slate-800" disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {t("auth.loggingIn")}
+                </>
+              ) : (
+                t("auth.login")
+              )}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }
