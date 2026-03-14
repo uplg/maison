@@ -1,5 +1,16 @@
 # Maison
 
+## What it can do
+
+- Monitor and control local home devices from a single interface.
+- Manage Tuya-based devices such as feeders, fountains, and litter boxes.
+- Track energy and status data for Meross plugs.
+- Control Philips Hue lamps, including power, brightness, and color temperature (through Bluetooth, Zigbee coming soon.)
+- Query Tempo data, predictions, history, and calibration helpers.
+- Keep access private with local authentication and secure session cookies.
+
+![Maison](/screenshots/screenshot.jpg)
+
 Exposes only two app components:
 
 - `frontend/`: the current Vite/React frontend
@@ -42,21 +53,27 @@ Main settings:
 - `AUTH_RATE_LIMIT_WINDOW_SECONDS`: backend login throttling window
 - `CLOUDFLARE_TUNNEL_TOKEN`: optional token for the Cloudflare tunnel profile
 - `CLOUDFLARED_PROTOCOL`: Cloudflare transport protocol, default `http2` for better compatibility behind Docker/NAT
-- `CLOUDFLARE_PUBLIC_HOSTNAME`: optional stable public hostname, for example `cat-monitor.example.com`
+- `CLOUDFLARE_PUBLIC_HOSTNAME`: optional stable public hostname, for example `home.example.com`
 
 ## Security notes
 
 - `JWT_SECRET` must be set to a strong unique value; the backend now refuses to start with the default secret.
 - `users.json` must exist and contain at least one account with `password_hash`; plaintext passwords are refused.
-- Browser access is expected through the frontend only; permissive backend CORS has been removed.
-- Auth now uses an `HttpOnly` cookie instead of storing the session token in `localStorage`.
-- Login throttling now also happens inside the backend, not only at the edge.
+- Browser access is expected through the frontend only.
+- Auth uses an `HttpOnly` cookie.
+- Login throttling.
 - Simple audit logs are emitted for login success, failure, and rate-limit hits.
 
 To generate a password hash for `users.json`:
 
 ```bash
 cargo run --manifest-path backend/Cargo.toml --bin hash_password -- 'your-password'
+```
+
+Then :
+```bash
+cp users.json.template users.json
+# copy previous argon2i hashes into this file.
 ```
 
 ## Run locally
@@ -120,7 +137,7 @@ This starts:
 
 - the Rust backend on the host
 - the frontend container
-- the Mosquitto container
+- the Mosquitto container (for Meross devices, avoid flashing light)
 - the Cloudflare tunnel container
 
 Stop everything:
@@ -137,5 +154,3 @@ make stop
 ## Notes
 
 - `users.json.template` remains as a simple auth example.
-- Broadlink IR codes are stored in `broadlink-codes.json` when created.
-- Meross TLS broker data remains under `mosquitto/`.
