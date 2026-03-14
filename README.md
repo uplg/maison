@@ -30,6 +30,8 @@ The Rust backend reads these files directly from the repo root:
 
 Tempo cache and calibration files now live in `cache/tempo/`.
 
+Tempo recalibration workflow is documented in `docs/tempo-calibration.md`.
+
 ## Prerequisites
 
 - `bun` for the frontend

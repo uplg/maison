@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, f64::consts::PI, path::{Path, PathBuf}, sync::Arc};
 
 use chrono::{Datelike, Duration, NaiveDate, Timelike, Utc, Weekday};
 use chrono_tz::Europe::Paris;
@@ -12,8 +12,10 @@ const RTE_LIGHT_API: &str = "https://www.services-rte.com/cms/open_data/v1/tempo
 const RTE_WEBPAGE_URL: &str = "https://www.services-rte.com/fr/visualisez-les-donnees-publiees-par-rte/calendrier-des-offres-de-fourniture-de-type-tempo.html";
 const TARIFS_API_URL: &str = "https://tabular-api.data.gouv.fr/api/resources/0c3d1d36-c412-4620-8566-e5cbb4fa2b5a/data/?page_size=1&P_SOUSCRITE__exact=6&__id__sort=desc";
 const OPEN_METEO_API: &str = "https://api.open-meteo.com/v1/forecast";
+const OPEN_METEO_ARCHIVE_API: &str = "https://archive-api.open-meteo.com/v1/archive";
 const FRANCE_LAT: f64 = 46.603354;
 const FRANCE_LON: f64 = 1.888334;
+const MIN_CALIBRATION_SAMPLES: usize = 120;
 
 const TARIFS_CACHE_SECONDS: i64 = 24 * 60 * 60;
 const HISTORY_CACHE_SECONDS: i64 = 6 * 60 * 60;
@@ -184,10 +186,23 @@ pub struct TempoCalibrationParams {
     pub temp_reference: f64,
     pub weekend_factor: f64,
     pub renewable_factor: f64,
+    pub red_threshold_offset: f64,
+    pub white_threshold_offset: f64,
+    pub red_probability_scale: f64,
+    pub white_probability_scale: f64,
     pub calibration_date: Option<String>,
     pub calibration_accuracy: f64,
     pub calibration_red_recall: f64,
+    pub calibration_white_recall: f64,
+    pub calibration_macro_f1: f64,
+    pub calibration_sample_count: usize,
     pub monthly_adjustments: HashMap<u32, f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TempoCalibrationReport {
+    pub params: TempoCalibrationParams,
+    pub seasons: Vec<String>,
 }
 
 impl Default for TempoCalibrationParams {
@@ -198,9 +213,16 @@ impl Default for TempoCalibrationParams {
             temp_reference: 12.0,
             weekend_factor: 0.92,
             renewable_factor: 0.12,
+            red_threshold_offset: 0.0,
+            white_threshold_offset: 0.0,
+            red_probability_scale: 1.5,
+            white_probability_scale: 1.5,
             calibration_date: None,
             calibration_accuracy: 0.0,
             calibration_red_recall: 0.0,
+            calibration_white_recall: 0.0,
+            calibration_macro_f1: 0.0,
+            calibration_sample_count: 0,
             monthly_adjustments: HashMap::from([
                 (1, 0.98),
                 (2, 0.97),
@@ -226,13 +248,47 @@ struct RawCalibrationParams {
     temp_reference: Option<f64>,
     weekend_factor: Option<f64>,
     renewable_factor: Option<f64>,
+    red_threshold_offset: Option<f64>,
+    white_threshold_offset: Option<f64>,
+    red_probability_scale: Option<f64>,
+    white_probability_scale: Option<f64>,
     calibration_date: Option<String>,
     calibration_accuracy: Option<f64>,
     calibration_red_recall: Option<f64>,
+    calibration_white_recall: Option<f64>,
+    calibration_macro_f1: Option<f64>,
+    calibration_sample_count: Option<usize>,
     monthly_adjustments: Option<HashMap<String, f64>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone)]
+struct CalibrationDay {
+    date: NaiveDate,
+    color: String,
+    temperature_mean: f64,
+}
+
+#[derive(Debug, Clone)]
+struct CalibrationSeason {
+    season: String,
+    days: Vec<CalibrationDay>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct CalibrationMetrics {
+    accuracy: f64,
+    red_recall: f64,
+    white_recall: f64,
+    macro_f1: f64,
+    sample_count: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct TemperatureHistoryCache {
+    values: HashMap<String, f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct RteTempoResponse {
     values: HashMap<String, String>,
 }
@@ -586,6 +642,31 @@ impl TempoService {
         })
     }
 
+    pub async fn recalibrate(
+        &self,
+        seasons: &[String],
+        persist: bool,
+    ) -> Result<TempoCalibrationReport, AppError> {
+        let season_refs = if seasons.is_empty() {
+            available_cached_seasons(&self.cache_dir)?
+        } else {
+            seasons.to_vec()
+        };
+
+        self.ensure_history_cached(&season_refs).await?;
+
+        let calibrated = recalibrate_from_history(&self.cache_dir, &season_refs, &self.forecast_cache_path).await?;
+
+        if persist {
+            save_calibration(&self.calibration_path, &calibrated.params)?;
+        }
+
+        Ok(TempoCalibrationReport {
+            params: calibrated.params,
+            seasons: season_refs,
+        })
+    }
+
     async fn fetch_tempo_data(&self) -> Result<TempoData, AppError> {
         let response = self
             .client
@@ -698,6 +779,7 @@ impl TempoService {
             Ok(response) if response.status().is_success() => {
                 let payload: RteTempoResponse = response.json().await?;
                 let values = payload.values;
+                save_history_cache_file(&self.cache_dir, season, &values)?;
                 self.cache.write().await.history.insert(
                     season.to_string(),
                     Cached {
@@ -886,6 +968,13 @@ impl TempoService {
         );
         Some(values)
     }
+
+    async fn ensure_history_cached(&self, seasons: &[String]) -> Result<(), AppError> {
+        for season in seasons {
+            self.fetch_history_map(season).await?;
+        }
+        Ok(())
+    }
 }
 
 fn load_calibration(path: &PathBuf) -> Result<TempoCalibration, AppError> {
@@ -906,11 +995,28 @@ fn load_calibration(path: &PathBuf) -> Result<TempoCalibration, AppError> {
     params.temp_reference = raw.temp_reference.unwrap_or(params.temp_reference);
     params.weekend_factor = raw.weekend_factor.unwrap_or(params.weekend_factor);
     params.renewable_factor = raw.renewable_factor.unwrap_or(params.renewable_factor);
+    params.red_threshold_offset = raw.red_threshold_offset.unwrap_or(params.red_threshold_offset);
+    params.white_threshold_offset = raw
+        .white_threshold_offset
+        .unwrap_or(params.white_threshold_offset);
+    params.red_probability_scale = raw.red_probability_scale.unwrap_or(params.red_probability_scale);
+    params.white_probability_scale = raw
+        .white_probability_scale
+        .unwrap_or(params.white_probability_scale);
     params.calibration_date = raw.calibration_date;
     params.calibration_accuracy = raw.calibration_accuracy.unwrap_or(params.calibration_accuracy);
     params.calibration_red_recall = raw
         .calibration_red_recall
         .unwrap_or(params.calibration_red_recall);
+    params.calibration_white_recall = raw
+        .calibration_white_recall
+        .unwrap_or(params.calibration_white_recall);
+    params.calibration_macro_f1 = raw
+        .calibration_macro_f1
+        .unwrap_or(params.calibration_macro_f1);
+    params.calibration_sample_count = raw
+        .calibration_sample_count
+        .unwrap_or(params.calibration_sample_count);
 
     if let Some(monthly_adjustments) = raw.monthly_adjustments {
         params.monthly_adjustments = monthly_adjustments
@@ -925,6 +1031,22 @@ fn load_calibration(path: &PathBuf) -> Result<TempoCalibration, AppError> {
     })
 }
 
+fn save_calibration(path: &Path, params: &TempoCalibrationParams) -> Result<(), AppError> {
+    let serialized = serde_json::to_string_pretty(params)?;
+    std::fs::write(path, serialized)?;
+    Ok(())
+}
+
+fn save_history_cache_file(cache_dir: &Path, season: &str, values: &HashMap<String, String>) -> Result<(), AppError> {
+    std::fs::create_dir_all(cache_dir)?;
+    let path = cache_dir.join(format!("tempo_history_{season}.json"));
+    let payload = RteTempoResponse {
+        values: values.clone(),
+    };
+    std::fs::write(path, serde_json::to_string_pretty(&payload)?)?;
+    Ok(())
+}
+
 fn predict_day(
     params: &TempoCalibrationParams,
     date: NaiveDate,
@@ -934,17 +1056,22 @@ fn predict_day(
     let estimated_consumption = estimate_consumption(params, date, temperature_mean);
     let normalized = normalize_consumption(estimated_consumption);
     let tempo_day = get_tempo_day_number(date);
-    let threshold_red = calculate_threshold_red(tempo_day, state.stock_red);
-    let threshold_white = calculate_threshold_white_red(tempo_day, state.stock_red, state.stock_white);
+    let threshold_red = calculate_threshold_red(tempo_day, state.stock_red) + params.red_threshold_offset;
+    let threshold_white =
+        calculate_threshold_white_red(tempo_day, state.stock_red, state.stock_white) + params.white_threshold_offset;
     let dist_to_red = normalized - threshold_red;
     let dist_to_white = normalized - threshold_white;
 
     let can_red = can_be_red(date, state.consecutive_red) && state.stock_red > 0;
     let can_white = can_be_white(date) && state.stock_white > 0;
 
-    let prob_red = if can_red { sigmoid(dist_to_red, 1.5) } else { 0.0 };
+    let prob_red = if can_red {
+        sigmoid(dist_to_red, params.red_probability_scale)
+    } else {
+        0.0
+    };
     let prob_white = if can_white {
-        sigmoid(dist_to_white, 1.5) * (1.0 - prob_red)
+        sigmoid(dist_to_white, params.white_probability_scale) * (1.0 - prob_red)
     } else {
         0.0
     };
@@ -1058,7 +1185,7 @@ fn max_probability_color(probabilities: &TempoProbabilities) -> &'static str {
 }
 
 fn estimate_consumption(params: &TempoCalibrationParams, date: NaiveDate, temperature: f64) -> f64 {
-    let base = params.base_consumption;
+    let base = params.base_consumption * seasonal_curve_factor(date);
     let temp_effect = (params.temp_reference - temperature) * params.thermosensitivity;
     let weekend_factor = if is_weekend(date) {
         params.weekend_factor
@@ -1086,6 +1213,12 @@ fn calculate_threshold_white_red(tempo_day: i32, stock_red: i32, stock_white: i3
 
 fn sigmoid(value: f64, scale: f64) -> f64 {
     1.0 / (1.0 + (-value * scale).exp())
+}
+
+fn seasonal_curve_factor(date: NaiveDate) -> f64 {
+    let day_of_year = f64::from(date.ordinal0());
+    let winter_peak = ((2.0 * PI * (day_of_year - 15.0)) / 365.25).cos();
+    1.0 + 0.06 * winter_peak
 }
 
 fn current_season() -> String {
@@ -1188,4 +1321,500 @@ fn normalize_date_debut(value: &str) -> String {
 
 fn is_tempo_color(color: &str) -> bool {
     matches!(color, "BLUE" | "WHITE" | "RED")
+}
+
+fn available_cached_seasons(cache_dir: &Path) -> Result<Vec<String>, AppError> {
+    let mut seasons = std::fs::read_dir(cache_dir)?
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            let name = path.file_name()?.to_str()?;
+            name.strip_prefix("tempo_history_")?
+                .strip_suffix(".json")
+                .map(str::to_string)
+        })
+        .collect::<Vec<_>>();
+    seasons.sort();
+    seasons.dedup();
+    Ok(seasons)
+}
+
+async fn recalibrate_from_history(
+    cache_dir: &Path,
+    seasons: &[String],
+    forecast_cache_path: &Path,
+) -> Result<TempoCalibration, AppError> {
+    let baseline = TempoCalibrationParams::default();
+    let history = load_calibration_seasons(cache_dir, seasons, forecast_cache_path).await?;
+    let monthly_adjustments = derive_monthly_adjustments(&history, &baseline);
+    let base_consumption = derive_base_consumption(&history, &baseline, &monthly_adjustments);
+    let thermosensitivity = derive_thermosensitivity(&history, base_consumption, &baseline, &monthly_adjustments);
+    let weekend_factor = derive_weekend_factor(&history);
+    let temp_reference = derive_temp_reference(&history, thermosensitivity, &baseline, &monthly_adjustments);
+
+    let total_samples = history.iter().map(|season| season.days.len()).sum::<usize>();
+    if total_samples < MIN_CALIBRATION_SAMPLES {
+        return Err(AppError::service_unavailable(format!(
+            "Not enough historical weather samples for calibration ({total_samples} < {MIN_CALIBRATION_SAMPLES}). Temperature history could not be refreshed with enough dated samples."
+        )));
+    }
+
+    let mut best_params = TempoCalibrationParams {
+        base_consumption,
+        thermosensitivity,
+        temp_reference,
+        weekend_factor,
+        renewable_factor: baseline.renewable_factor,
+        red_threshold_offset: 0.0,
+        white_threshold_offset: 0.0,
+        red_probability_scale: baseline.red_probability_scale,
+        white_probability_scale: baseline.white_probability_scale,
+        calibration_date: Some(paris_today().format("%Y-%m-%d").to_string()),
+        calibration_accuracy: 0.0,
+        calibration_red_recall: 0.0,
+        calibration_white_recall: 0.0,
+        calibration_macro_f1: 0.0,
+        calibration_sample_count: 0,
+        monthly_adjustments,
+    };
+
+    let mut best_metrics = score_calibration(&history, &best_params);
+
+    for red_offset in [-0.45, -0.30, -0.15, 0.0, 0.15, 0.30] {
+        for white_offset in [-0.35, -0.20, -0.10, 0.0, 0.10, 0.20] {
+            for red_scale in [1.1, 1.3, 1.5, 1.7, 1.9] {
+                for white_scale in [1.0, 1.2, 1.4, 1.6, 1.8] {
+                    let mut candidate = best_params.clone();
+                    candidate.red_threshold_offset = red_offset;
+                    candidate.white_threshold_offset = white_offset;
+                    candidate.red_probability_scale = red_scale;
+                    candidate.white_probability_scale = white_scale;
+
+                    let metrics = score_calibration(&history, &candidate);
+                    if calibration_score(metrics) > calibration_score(best_metrics) {
+                        best_params = candidate;
+                        best_metrics = metrics;
+                    }
+                }
+            }
+        }
+    }
+
+    best_params.calibration_accuracy = best_metrics.accuracy;
+    best_params.calibration_red_recall = best_metrics.red_recall;
+    best_params.calibration_white_recall = best_metrics.white_recall;
+    best_params.calibration_macro_f1 = best_metrics.macro_f1;
+    best_params.calibration_sample_count = best_metrics.sample_count;
+
+    Ok(TempoCalibration {
+        calibrated: true,
+        params: best_params,
+    })
+}
+
+async fn load_calibration_seasons(
+    cache_dir: &Path,
+    seasons: &[String],
+    forecast_cache_path: &Path,
+) -> Result<Vec<CalibrationSeason>, AppError> {
+    let mut season_payloads = Vec::new();
+    let mut required_dates = Vec::new();
+
+    for season in seasons {
+        let path = cache_dir.join(format!("tempo_history_{season}.json"));
+        let content = std::fs::read_to_string(path)?;
+        let payload = serde_json::from_str::<RteTempoResponse>(&content)?;
+        for (date, color) in &payload.values {
+            if is_tempo_color(color) {
+                if let Ok(parsed) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+                    required_dates.push(parsed);
+                }
+            }
+        }
+        season_payloads.push((season.clone(), payload));
+    }
+
+    required_dates.sort();
+    required_dates.dedup();
+    let temps = load_temperature_history(cache_dir, &required_dates, forecast_cache_path).await?;
+
+    let mut result = Vec::new();
+
+    for (season, payload) in season_payloads {
+        let mut days = payload
+            .values
+            .into_iter()
+            .filter(|(_, color)| is_tempo_color(color))
+            .filter_map(|(date, color)| {
+                let parsed = NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok()?;
+                let temperature_mean = temps.get(&date).copied()?;
+                Some(CalibrationDay {
+                    date: parsed,
+                    color,
+                    temperature_mean,
+                })
+            })
+            .collect::<Vec<_>>();
+        days.sort_by_key(|day| day.date);
+        result.push(CalibrationSeason {
+            season,
+            days,
+        });
+    }
+
+    Ok(result)
+}
+
+async fn load_temperature_history(
+    cache_dir: &Path,
+    required_dates: &[NaiveDate],
+    forecast_cache_path: &Path,
+) -> Result<HashMap<String, f64>, AppError> {
+    if required_dates.is_empty() {
+        return Err(AppError::service_unavailable("No historical Tempo dates available for calibration"));
+    }
+
+    let path = cache_dir.join("temperature_history.json");
+    let cached_values = if path.exists() {
+        let content = std::fs::read_to_string(&path)?;
+        Some(serde_json::from_str::<TemperatureHistoryCache>(&content)?.values)
+    } else {
+        None
+    };
+
+    if let Some(values) = &cached_values {
+        let covered = count_available_temperature_dates(values, required_dates);
+        if covered >= MIN_CALIBRATION_SAMPLES {
+            return Ok(values.clone());
+        }
+    }
+
+    let cached_coverage = cached_values
+        .as_ref()
+        .map(|values| count_available_temperature_dates(values, required_dates))
+        .unwrap_or(0);
+
+    let values = match fetch_temperature_history_from_archive(required_dates).await {
+        Ok(values) => values,
+        Err(_) => {
+            if let Some(values) = cached_values {
+                let covered = count_available_temperature_dates(&values, required_dates);
+                if covered >= MIN_CALIBRATION_SAMPLES {
+                    return Ok(values);
+                }
+            }
+
+            let content = std::fs::read_to_string(forecast_cache_path)?;
+            let cache = serde_json::from_str::<ForecastCacheFile>(&content)?;
+            cache
+                .data
+                .into_iter()
+                .map(|entry| (entry.date, entry.temperature_mean))
+                .collect::<HashMap<_, _>>()
+        }
+    };
+
+    let refreshed_coverage = count_available_temperature_dates(&values, required_dates);
+    if refreshed_coverage < MIN_CALIBRATION_SAMPLES {
+        return Err(AppError::service_unavailable(format!(
+            "Not enough historical weather samples for calibration ({refreshed_coverage} < {MIN_CALIBRATION_SAMPLES}). Cached coverage: {cached_coverage}. Open-Meteo archive may be unavailable or incomplete for the requested seasons."
+        )));
+    }
+
+    std::fs::write(&path, serde_json::to_string_pretty(&TemperatureHistoryCache { values: values.clone() })?)?;
+    Ok(values)
+}
+
+fn count_available_temperature_dates(values: &HashMap<String, f64>, required_dates: &[NaiveDate]) -> usize {
+    required_dates
+        .iter()
+        .filter(|date| values.contains_key(&date.format("%Y-%m-%d").to_string()))
+        .count()
+}
+
+async fn fetch_temperature_history_from_archive(required_dates: &[NaiveDate]) -> Result<HashMap<String, f64>, AppError> {
+    let client = reqwest::Client::builder().user_agent("CatMonitor-Rust/0.1").build()?;
+    let mut values = HashMap::new();
+
+    for (start, end) in group_dates_by_season(required_dates) {
+        let response = client
+            .get(OPEN_METEO_ARCHIVE_API)
+            .query(&[
+                ("latitude", FRANCE_LAT.to_string()),
+                ("longitude", FRANCE_LON.to_string()),
+                ("daily", "temperature_2m_mean".to_string()),
+                ("timezone", "Europe/Paris".to_string()),
+                ("start_date", start.format("%Y-%m-%d").to_string()),
+                ("end_date", end.format("%Y-%m-%d").to_string()),
+            ])
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(AppError::service_unavailable(format!(
+                "Failed to fetch Open-Meteo archive data: {}",
+                response.status()
+            )));
+        }
+
+        let payload: OpenMeteoForecastResponse = response.json().await?;
+        values.extend(
+            payload
+                .daily
+                .time
+                .into_iter()
+                .zip(payload.daily.temperature_2m_mean),
+        );
+    }
+
+    Ok(values)
+}
+
+fn group_dates_by_season(required_dates: &[NaiveDate]) -> Vec<(NaiveDate, NaiveDate)> {
+    let mut ranges = required_dates
+        .iter()
+        .map(|date| {
+            let start_year = if date.month() >= 9 { date.year() } else { date.year() - 1 };
+            let start = NaiveDate::from_ymd_opt(start_year, 9, 1).unwrap_or(*date);
+            let end = if start_year + 1 == paris_today().year() && paris_today().month() < 9 {
+                paris_today()
+            } else {
+                NaiveDate::from_ymd_opt(start_year + 1, 8, 31).unwrap_or(*date)
+            };
+            (start, end)
+        })
+        .collect::<Vec<_>>();
+    ranges.sort();
+    ranges.dedup();
+    ranges
+}
+
+fn derive_monthly_adjustments(
+    seasons: &[CalibrationSeason],
+    baseline: &TempoCalibrationParams,
+) -> HashMap<u32, f64> {
+    let mut adjustments = HashMap::new();
+    for month in 1..=12 {
+        let month_days = seasons
+            .iter()
+            .flat_map(|season| season.days.iter())
+            .filter(|day| day.date.month() == month)
+            .collect::<Vec<_>>();
+        if month_days.is_empty() {
+            adjustments.insert(month, *baseline.monthly_adjustments.get(&month).unwrap_or(&1.0));
+            continue;
+        }
+
+        let red_share = month_days.iter().filter(|day| day.color == "RED").count() as f64 / month_days.len() as f64;
+        let white_share = month_days.iter().filter(|day| day.color == "WHITE").count() as f64 / month_days.len() as f64;
+        let factor = 0.86 + red_share * 0.36 + white_share * 0.14;
+        adjustments.insert(month, factor.clamp(0.76, 1.14));
+    }
+    adjustments
+}
+
+fn derive_base_consumption(
+    seasons: &[CalibrationSeason],
+    baseline: &TempoCalibrationParams,
+    monthly_adjustments: &HashMap<u32, f64>,
+) -> f64 {
+    let mut blue_days = seasons
+        .iter()
+        .flat_map(|season| season.days.iter())
+        .filter(|day| day.color == "BLUE" && !is_weekend(day.date))
+        .collect::<Vec<_>>();
+    blue_days.sort_by_key(|day| day.date);
+
+    if blue_days.is_empty() {
+        return baseline.base_consumption;
+    }
+
+    let estimate = blue_days
+        .iter()
+        .map(|day| {
+            let monthly = monthly_adjustments.get(&day.date.month()).copied().unwrap_or(1.0);
+            let seasonal = seasonal_curve_factor(day.date);
+            (NORMALIZATION_MEAN + blue_reference_zscore(day.date) * NORMALIZATION_STD)
+                / (monthly * seasonal)
+                - (baseline.temp_reference - day.temperature_mean) * baseline.thermosensitivity
+        })
+        .sum::<f64>()
+        / blue_days.len() as f64;
+
+    estimate.clamp(40_000.0, 52_000.0)
+}
+
+fn derive_thermosensitivity(
+    seasons: &[CalibrationSeason],
+    base_consumption: f64,
+    baseline: &TempoCalibrationParams,
+    monthly_adjustments: &HashMap<u32, f64>,
+) -> f64 {
+    let mut winter_days = seasons
+        .iter()
+        .flat_map(|season| season.days.iter())
+        .filter(|day| !is_weekend(day.date))
+        .collect::<Vec<_>>();
+    winter_days.sort_by_key(|day| day.date);
+
+    if winter_days.is_empty() {
+        return baseline.thermosensitivity;
+    }
+
+    let mut numerator = 0.0;
+    let mut denominator = 0.0;
+
+    for day in winter_days {
+        let monthly = monthly_adjustments.get(&day.date.month()).copied().unwrap_or(1.0);
+        let seasonal = seasonal_curve_factor(day.date);
+        let target = target_zscore_for_color(&day.color) * NORMALIZATION_STD + NORMALIZATION_MEAN;
+        let adjusted_target = target / (monthly * seasonal) - base_consumption;
+        let temp_delta = baseline.temp_reference - day.temperature_mean;
+        numerator += adjusted_target * temp_delta;
+        denominator += temp_delta * temp_delta;
+    }
+
+    if denominator <= f64::EPSILON {
+        baseline.thermosensitivity
+    } else {
+        (numerator / denominator).clamp(300.0, 2200.0)
+    }
+}
+
+fn derive_temp_reference(
+    seasons: &[CalibrationSeason],
+    thermosensitivity: f64,
+    baseline: &TempoCalibrationParams,
+    monthly_adjustments: &HashMap<u32, f64>,
+) -> f64 {
+    let shoulder_days = seasons
+        .iter()
+        .flat_map(|season| season.days.iter())
+        .filter(|day| matches!(day.date.month(), 3 | 4 | 9 | 10 | 11))
+        .collect::<Vec<_>>();
+
+    if shoulder_days.is_empty() || thermosensitivity.abs() < f64::EPSILON {
+        return baseline.temp_reference;
+    }
+
+    let average = shoulder_days
+        .iter()
+        .map(|day| {
+            let monthly = monthly_adjustments.get(&day.date.month()).copied().unwrap_or(1.0);
+            let seasonal = seasonal_curve_factor(day.date);
+            let target = target_zscore_for_color(&day.color) * NORMALIZATION_STD + NORMALIZATION_MEAN;
+            day.temperature_mean + ((target / (monthly * seasonal)) - baseline.base_consumption) / thermosensitivity
+        })
+        .sum::<f64>()
+        / shoulder_days.len() as f64;
+
+    average.clamp(8.0, 16.0)
+}
+
+fn derive_weekend_factor(seasons: &[CalibrationSeason]) -> f64 {
+    let weekday = seasons
+        .iter()
+        .flat_map(|season| season.days.iter())
+        .filter(|day| !is_weekend(day.date))
+        .map(|day| target_zscore_for_color(&day.color))
+        .collect::<Vec<_>>();
+    let weekend = seasons
+        .iter()
+        .flat_map(|season| season.days.iter())
+        .filter(|day| is_weekend(day.date))
+        .map(|day| target_zscore_for_color(&day.color))
+        .collect::<Vec<_>>();
+
+    if weekday.is_empty() || weekend.is_empty() {
+        return 0.92;
+    }
+
+    let weekday_avg = weekday.iter().sum::<f64>() / weekday.len() as f64;
+    let weekend_avg = weekend.iter().sum::<f64>() / weekend.len() as f64;
+    (1.0 + (weekend_avg - weekday_avg) * 0.05).clamp(0.88, 0.98)
+}
+
+fn score_calibration(seasons: &[CalibrationSeason], params: &TempoCalibrationParams) -> CalibrationMetrics {
+    let mut total = 0usize;
+    let mut correct = 0usize;
+    let mut true_red = 0usize;
+    let mut matched_red = 0usize;
+    let mut true_white = 0usize;
+    let mut matched_white = 0usize;
+    let mut tp = HashMap::from([("BLUE", 0usize), ("WHITE", 0usize), ("RED", 0usize)]);
+    let mut fp = HashMap::from([("BLUE", 0usize), ("WHITE", 0usize), ("RED", 0usize)]);
+    let mut fnm = HashMap::from([("BLUE", 0usize), ("WHITE", 0usize), ("RED", 0usize)]);
+
+    for season in seasons {
+        let _ = &season.season;
+        let mut state = PredictorState::default();
+        for day in &season.days {
+            let prediction = predict_day(params, day.date, day.temperature_mean, &state);
+            total += 1;
+            if prediction.predicted_color == day.color {
+                correct += 1;
+                *tp.get_mut(day.color.as_str()).unwrap() += 1;
+            } else {
+                *fp.get_mut(prediction.predicted_color.as_str()).unwrap() += 1;
+                *fnm.get_mut(day.color.as_str()).unwrap() += 1;
+            }
+            if day.color == "RED" {
+                true_red += 1;
+                if prediction.predicted_color == "RED" {
+                    matched_red += 1;
+                }
+            }
+            if day.color == "WHITE" {
+                true_white += 1;
+                if prediction.predicted_color == "WHITE" {
+                    matched_white += 1;
+                }
+            }
+            state = advance_state_with_actual_color(state, &day.color);
+        }
+    }
+
+    let macro_f1 = ["BLUE", "WHITE", "RED"]
+        .into_iter()
+        .map(|color| {
+            let tp = *tp.get(color).unwrap() as f64;
+            let fp = *fp.get(color).unwrap() as f64;
+            let fnv = *fnm.get(color).unwrap() as f64;
+            let precision = if tp + fp > 0.0 { tp / (tp + fp) } else { 0.0 };
+            let recall = if tp + fnv > 0.0 { tp / (tp + fnv) } else { 0.0 };
+            if precision + recall > 0.0 {
+                2.0 * precision * recall / (precision + recall)
+            } else {
+                0.0
+            }
+        })
+        .sum::<f64>()
+        / 3.0;
+
+    CalibrationMetrics {
+        accuracy: if total > 0 { correct as f64 / total as f64 } else { 0.0 },
+        red_recall: if true_red > 0 { matched_red as f64 / true_red as f64 } else { 0.0 },
+        white_recall: if true_white > 0 { matched_white as f64 / true_white as f64 } else { 0.0 },
+        macro_f1,
+        sample_count: total,
+    }
+}
+
+fn calibration_score(metrics: CalibrationMetrics) -> f64 {
+    metrics.accuracy * 0.45 + metrics.red_recall * 0.30 + metrics.white_recall * 0.10 + metrics.macro_f1 * 0.15
+}
+
+fn blue_reference_zscore(date: NaiveDate) -> f64 {
+    match date.month() {
+        12 | 1 | 2 => 0.15,
+        11 | 3 => -0.10,
+        _ => -0.35,
+    }
+}
+
+fn target_zscore_for_color(color: &str) -> f64 {
+    match color {
+        "RED" => 3.05,
+        "WHITE" => 1.45,
+        _ => -0.25,
+    }
 }

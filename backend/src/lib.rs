@@ -9,6 +9,8 @@ pub mod routes;
 pub mod tempo;
 pub mod tuya;
 
+pub use tempo::TempoService;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -19,7 +21,6 @@ use error::AppError;
 use hue::HueManager;
 use routes::auth::{load_users, SharedUsers};
 use meross::MerossManager;
-use tempo::TempoService;
 use tuya::TuyaManager;
 use tower_http::trace::TraceLayer;
 

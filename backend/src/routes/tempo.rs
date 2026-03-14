@@ -12,8 +12,8 @@ use crate::{
     auth::AuthenticatedUser,
     error::AppError,
     tempo::{
-        TempoCalibrationResponse, TempoCalendarResponse, TempoData, TempoHistoryResponse,
-        TempoPredictionServiceResponse, TempoPredictionState, TempoTarifs,
+        TempoCalibrationReport, TempoCalibrationResponse, TempoCalendarResponse, TempoData,
+        TempoHistoryResponse, TempoPredictionServiceResponse, TempoPredictionState, TempoTarifs,
     },
     AppState,
 };
@@ -66,6 +66,12 @@ struct SeasonQuery {
     season: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct CalibrationQuery {
+    seasons: Option<String>,
+    persist: Option<bool>,
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(get_tempo))
@@ -75,6 +81,7 @@ pub fn router() -> Router<AppState> {
         .route("/calendar", get(get_calendar))
         .route("/history", get(get_history))
         .route("/calibration", get(get_calibration))
+        .route("/calibration/rebuild", post(rebuild_calibration))
 }
 
 async fn get_tempo(
@@ -171,6 +178,28 @@ async fn get_calibration(
     let _ = user.0;
     let response = state.tempo.get_calibration().await?;
     Ok(Json(response))
+}
+
+async fn rebuild_calibration(
+    State(state): State<AppState>,
+    Query(query): Query<CalibrationQuery>,
+    user: AuthenticatedUser,
+) -> Result<Json<TempoCalibrationReport>, AppError> {
+    let _ = user.0;
+    let seasons = query
+        .seasons
+        .as_deref()
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|season| !season.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let report = state.tempo.recalibrate(&seasons, query.persist.unwrap_or(true)).await?;
+    Ok(Json(report))
 }
 
 fn ok_tempo_response(data: TempoData, message: &str, is_cached: bool) -> axum::response::Response {

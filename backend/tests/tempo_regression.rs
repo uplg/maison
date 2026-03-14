@@ -9,6 +9,8 @@ use jsonwebtoken::{encode, EncodingKey, Header};
 use serde_json::Value;
 use tower::ServiceExt;
 
+use cat_monitor_rust_backend::tempo::TempoService;
+
 #[tokio::test]
 async fn tempo_state_uses_migrated_cache_data() {
     let (status, body) = request_rust("/api/tempo/state").await;
@@ -68,6 +70,29 @@ async fn tempo_calibration_reads_migrated_calibration_file() {
         body.pointer("/params/calibration_date").and_then(Value::as_str),
         Some("2026-03-02")
     );
+}
+
+#[tokio::test]
+async fn tempo_recalibration_produces_metrics_without_persisting() {
+    let service = TempoService::new(workspace_root()).expect("tempo service should build");
+    let report = match service
+        .recalibrate(&["2024-2025".to_string(), "2025-2026".to_string()], false)
+        .await
+    {
+        Ok(report) => report,
+        Err(error) => {
+            assert!(error
+                .to_string()
+                .contains("Not enough historical weather samples for calibration"));
+            return;
+        }
+    };
+
+    assert_eq!(report.seasons, vec!["2024-2025", "2025-2026"]);
+    assert!(report.params.calibration_sample_count >= 120);
+    assert!(report.params.calibration_accuracy > 0.0);
+    assert!(report.params.calibration_red_recall >= 0.0);
+    assert!(report.params.calibration_white_recall >= 0.0);
 }
 
 async fn request_rust(path: &str) -> (StatusCode, Value) {
