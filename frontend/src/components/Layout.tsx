@@ -17,8 +17,8 @@ export function Layout() {
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
         <div className="container flex h-14 items-center">
-          <Link to="/" className="flex items-center gap-2 font-semibold">
-            <House className="h-6 w-6 text-primary" />
+          <Link to="/" className="flex items-center gap-2 font-semibold text-slate-950">
+            <House className="h-6 w-6 text-slate-900" />
             <span className="hidden xs:inline">Maison</span>
           </Link>
 
@@ -38,7 +38,7 @@ export function Layout() {
               <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{user?.role}</span>
             </div>
             <Separator orientation="vertical" className="h-6" />
-            <Button variant="ghost" size="sm" onClick={logout}>
+            <Button variant="ghost" size="sm" onClick={() => void logout()}>
               <LogOut className="mr-2 h-4 w-4" />
               {t("auth.logout")}
             </Button>
@@ -83,10 +83,10 @@ export function Layout() {
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  logout();
+                  void logout();
                   setMobileMenuOpen(false);
                 }}
-                className="w-full justify-start text-destructive hover:text-destructive"
+                className="w-full justify-start"
               >
                 <LogOut className="mr-2 h-4 w-4" />
                 {t("auth.logout")}

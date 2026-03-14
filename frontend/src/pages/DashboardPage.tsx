@@ -35,10 +35,10 @@ const deviceIcons: Record<string, React.ReactNode> = {
 };
 
 const deviceColors: Record<string, string> = {
-  feeder: "bg-orange-100 text-orange-600",
-  fountain: "bg-blue-100 text-blue-600",
-  "litter-box": "bg-green-100 text-green-600",
-  unknown: "bg-gray-100 text-gray-600",
+  feeder: "bg-slate-100 text-slate-700",
+  fountain: "bg-slate-100 text-slate-700",
+  "litter-box": "bg-slate-100 text-slate-700",
+  unknown: "bg-slate-100 text-slate-700",
 };
 
 function DeviceCard({ device }: { device: Device }) {
@@ -280,7 +280,7 @@ export function DashboardPage() {
         <section className="space-y-4">
           <DashboardSectionHeader
             icon={<Lightbulb className="h-5 w-5" />}
-            iconClassName="bg-yellow-100 text-yellow-600"
+            iconClassName="bg-slate-100 text-slate-700"
             title={t("hueLamps.title")}
             description={t("hueLamps.subtitle")}
             actions={
@@ -345,7 +345,7 @@ export function DashboardPage() {
       <section className="space-y-4">
         <DashboardSectionHeader
           icon={<Plug className="h-5 w-5" />}
-          iconClassName="bg-emerald-100 text-emerald-600"
+          iconClassName="bg-slate-100 text-slate-700"
           title={t("meross.title")}
           description={t("meross.subtitle")}
         />
@@ -455,7 +455,7 @@ export function DashboardPage() {
       <section className="space-y-4">
         <DashboardSectionHeader
           icon={<Snowflake className="h-5 w-5" />}
-          iconClassName="bg-sky-100 text-sky-600"
+          iconClassName="bg-slate-100 text-slate-700"
           title={t("climate.dashboardTitle")}
           description={t("climate.dashboardSubtitle")}
           actions={

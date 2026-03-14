@@ -14,7 +14,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -54,11 +54,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [navigate],
   );
 
-  const logout = useCallback(() => {
-    void authApi.logout().catch(() => undefined);
+  const logout = useCallback(async () => {
+    try {
+      await authApi.logout();
+    } catch {
+      // We still clear local auth state even if the server-side logout request fails.
+    }
+
     setUser(null);
-    queryClient.clear();
-    navigate("/login");
+    queryClient.removeQueries({ queryKey: ["auth"] });
+    queryClient.cancelQueries();
+    navigate("/login", { replace: true });
   }, [navigate, queryClient]);
 
   const value = useMemo(

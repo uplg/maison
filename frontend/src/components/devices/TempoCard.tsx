@@ -183,15 +183,15 @@ export function TempoCard() {
       <CardHeader className="px-0 pb-1">
         <DashboardSectionHeader
           icon={<Calendar className="h-5 w-5" />}
-          iconClassName="bg-yellow-100 text-yellow-600"
+          iconClassName="bg-slate-100 text-slate-700"
           title={
             <button
               type="button"
-              className="group flex items-center gap-2 text-left transition-colors hover:text-yellow-600"
+              className="group flex items-center gap-2 text-left transition-colors hover:text-slate-700"
               onClick={() => navigate("/tempo-predictions")}
             >
               <span>{t("tempo.title")}</span>
-              <TrendingUp className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-yellow-600" />
+              <TrendingUp className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-slate-700" />
             </button>
           }
           description={t("tempo.subtitle")}
