@@ -39,18 +39,15 @@
     "securityDescription": "Authentication is required before any device control is available.",
     "localTitle": "Host-first runtime",
     "localDescription": "Bluetooth and local integrations stay on the host for reliability.",
-    "accessTitle": "Private entry point",
-    "accessDescription": "Remote access goes through your private Cloudflare URL and your login.",
     "loginSuccess": "Welcome back",
     "loginSuccessDescription": "Successfully logged in",
     "loginError": "Login error",
-    "invalidCredentials": "Invalid credentials",
-    "testUsers": "Test users:"
+    "invalidCredentials": "Invalid credentials"
   },
   "layout": {
     "dashboard": "Dashboard",
     "climate": "Climate",
-    "footer": "Maison © {{year}}"
+    "footer": "Uplg | Maison © {{year}}"
   },
   "dashboard": {
     "title": "Dashboard",

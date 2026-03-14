@@ -33,24 +33,21 @@
     "loggingIn": "Connexion...",
     "username": "Nom d'utilisateur",
     "password": "Mot de passe",
-    "loginDescription": "Pilotage local et securise de l'eclairage, du climat, des prises et des appareils connectes.",
-    "loginCardDescription": "Utilisez un compte valide pour acceder a votre tableau de bord prive.",
-    "securityTitle": "Acces protege",
-    "securityDescription": "Une authentification est requise avant tout controle des appareils.",
-    "localTitle": "Execution sur l'hote",
-    "localDescription": "Le Bluetooth et les integrations locales restent sur l'hote pour plus de fiabilite.",
-    "accessTitle": "Entree privee",
-    "accessDescription": "L'acces distant passe par votre URL Cloudflare privee et votre login.",
+    "loginDescription": "Pilotage local et sécurisé de l'éclairage, du climat, des prises et des appareils connectés.",
+    "loginCardDescription": "Utilisez un compte valide pour accéder à votre tableau de bord privé.",
+    "securityTitle": "Accès protégé",
+    "securityDescription": "Une authentification est requise avant tout contrôle des appareils.",
+    "localTitle": "Exécution sur l'hôte",
+    "localDescription": "Le Bluetooth et les intégrations locales restent sur l'hôte pour plus de fiabilité.",
     "loginSuccess": "Bon retour",
     "loginSuccessDescription": "Connexion réussie",
     "loginError": "Erreur de connexion",
-    "invalidCredentials": "Identifiants incorrects",
-    "testUsers": "Utilisateurs de test :"
+    "invalidCredentials": "Identifiants incorrects"
   },
   "layout": {
     "dashboard": "Dashboard",
     "climate": "Climatisation",
-    "footer": "Maison © {{year}}"
+    "footer": "Uplg | Maison © {{year}}"
   },
   "dashboard": {
     "title": "Dashboard",
