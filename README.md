@@ -151,6 +151,8 @@ make stop
 - Frontend build: `bun --cwd frontend run build`
 - Backend tests: `cargo test --manifest-path backend/Cargo.toml`
 
-## Notes
+### Planned
 
-- `users.json.template` remains as a simple auth example.
+- Unify code, everything is a device, no more "specific" types everything derived from base "object".
+- Zigbee integration (using a Sonoff USB dongle)
+- Matter bridge (but will not handle cats-related devices such as litter as it's not yet in the specification.)
