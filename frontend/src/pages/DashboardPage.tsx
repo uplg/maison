@@ -335,7 +335,7 @@ export function DashboardPage() {
 
           {hueLampsData?.lamps && hueLampsData.lamps.length > 0 && (
             <div className="text-center text-sm text-muted-foreground">
-              {t("hueLamps.lampCount", { count: hueLampsData.total })} •
+              {t("hueLamps.lampCount", { count: hueLampsData.total })} • 
               {t("hueLamps.connectedCount", { count: hueLampsData.connected })}
             </div>
           )}
@@ -370,7 +370,7 @@ export function DashboardPage() {
 
         {merossPlugsData?.devices && merossPlugsData.devices.length > 0 && (
           <div className="text-center text-sm text-muted-foreground">
-            {t("meross.plugCount", { count: merossPlugsData.total })} •
+            {t("meross.plugCount", { count: merossPlugsData.total })} • 
             {t("meross.onlineCount", {
               count: merossPlugsData.devices.filter((d) => d.isOnline).length,
             })}
