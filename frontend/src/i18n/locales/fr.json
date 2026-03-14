@@ -328,7 +328,10 @@
     "simpleDescription": "Une télécommande claire, compacte et locale.",
     "dashboardTitle": "Climatisation",
     "dashboardSubtitle": "Télécommande du RM4 Pro pour la clim Mitsubishi.",
+    "brandName": "Mitsubishi",
+    "structuredDescription": "Construisez une commande complète `state-*` et envoyez-la directement au RM4 Pro.",
     "remoteConnected": "RM4 Pro connecté",
+    "remoteFallbackHost": "RM4 Pro",
     "searchingTitle": "Recherche du RM4 Pro",
     "searchingDescription": "Découverte automatique sur le réseau local...",
     "noRemoteTitle": "Aucune télécommande sur le réseau",
@@ -336,7 +339,47 @@
     "noCommands": "Aucune commande Mitsubishi sauvegardée.",
     "commandSent": "Commande envoyée",
     "commandSentDescription": "La scène {{command}} a été transmise au RM4 Pro {{host}}.",
-    "commandFailed": "Impossible d'envoyer la commande"
+    "commandFailed": "Impossible d'envoyer la commande",
+    "reset": "Réinitialiser",
+    "power": "Alimentation",
+    "on": "Marche",
+    "off": "Arrêt",
+    "mode": "Mode",
+    "temperature": "Température",
+    "fan": "Ventilation",
+    "verticalVane": "Volet vertical",
+    "timerMode": "Minuteur",
+    "stopTime": "Heure d'arrêt",
+    "econoCool": "Mode éco froid",
+    "econoCoolDescription": "Utile uniquement en mode froid.",
+    "generatedCommand": "Commande générée",
+    "sendStructuredCommand": "Envoyer la commande structurée",
+    "sendOff": "Envoyer l'arrêt",
+    "modes": {
+      "cool": "Froid",
+      "heat": "Chaud",
+      "dry": "Déshumidification",
+      "fan": "Ventilation",
+      "auto": "Auto"
+    },
+    "fanLevels": {
+      "auto": "Auto",
+      "level": "Niveau {{level}}",
+      "silent": "Silencieux"
+    },
+    "vanes": {
+      "auto": "Auto",
+      "highest": "Très haut",
+      "high": "Haut",
+      "middle": "Milieu",
+      "low": "Bas",
+      "lowest": "Très bas",
+      "swing": "Balayage"
+    },
+    "timerModes": {
+      "none": "Aucun",
+      "stop": "Arrêt uniquement"
+    }
   },
   "tempo": {
     "title": "Tempo EDF",

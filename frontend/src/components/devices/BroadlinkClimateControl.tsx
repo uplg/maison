@@ -99,7 +99,7 @@ export function BroadlinkClimateControl({
         title: t("climate.commandSent"),
         description: t("climate.commandSentDescription", {
           command,
-          host: remote?.host ?? "RM4 Pro",
+          host: remote?.host ?? t("climate.remoteFallbackHost"),
         }),
       });
     },
@@ -170,16 +170,16 @@ export function BroadlinkClimateControl({
             <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <div className="text-sm font-semibold text-slate-900">Structured Mitsubishi test</div>
-                  <div className="mt-1 text-sm text-slate-500">Build a full `state-*` command and send it directly to the RM4 Pro.</div>
+                  <div className="text-sm font-semibold text-slate-900">{t("climate.brandName")}</div>
+                  <div className="mt-1 text-sm text-slate-500">{t("climate.structuredDescription")}</div>
                 </div>
                 <Button variant="outline" className="rounded-2xl" onClick={() => setStructuredState(INITIAL_STATE)} disabled={sendMutation.isPending}>
-                  Reset
+                  {t("climate.reset")}
                 </Button>
               </div>
 
               <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <ControlBlock label="Power">
+                <ControlBlock label={t("climate.power")}>
                   <div className="flex gap-2">
                     <Button
                       type="button"
@@ -188,7 +188,7 @@ export function BroadlinkClimateControl({
                       onClick={() => setStructuredState((current) => ({ ...current, power: true }))}
                       disabled={sendMutation.isPending}
                     >
-                      On
+                      {t("climate.on")}
                     </Button>
                     <Button
                       type="button"
@@ -197,12 +197,12 @@ export function BroadlinkClimateControl({
                       onClick={() => setStructuredState((current) => ({ ...current, power: false }))}
                       disabled={sendMutation.isPending}
                     >
-                      Off
+                      {t("climate.off")}
                     </Button>
                   </div>
                 </ControlBlock>
 
-                <ControlBlock label="Mode">
+                <ControlBlock label={t("climate.mode")}>
                   <Select
                     value={structuredState.mode}
                     onValueChange={(value: ClimateMode) =>
@@ -212,21 +212,21 @@ export function BroadlinkClimateControl({
                         econo: value === "cool" ? current.econo : false,
                       }))
                     }
-                  >
-                    <SelectTrigger className="rounded-2xl">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cool">Cool</SelectItem>
-                      <SelectItem value="heat">Heat</SelectItem>
-                      <SelectItem value="dry">Dry</SelectItem>
-                      <SelectItem value="fan">Fan</SelectItem>
-                      <SelectItem value="auto">Auto</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </ControlBlock>
+                    >
+                      <SelectTrigger className="rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cool">{t("climate.modes.cool")}</SelectItem>
+                        <SelectItem value="heat">{t("climate.modes.heat")}</SelectItem>
+                        <SelectItem value="dry">{t("climate.modes.dry")}</SelectItem>
+                        <SelectItem value="fan">{t("climate.modes.fan")}</SelectItem>
+                        <SelectItem value="auto">{t("climate.modes.auto")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </ControlBlock>
 
-                <ControlBlock label="Temperature">
+                <ControlBlock label={t("climate.temperature")}>
                   <Input
                     type="number"
                     min={16}
@@ -243,61 +243,61 @@ export function BroadlinkClimateControl({
                   />
                 </ControlBlock>
 
-                <ControlBlock label="Fan">
+                <ControlBlock label={t("climate.fan")}>
                   <Select
                     value={structuredState.fan}
                     onValueChange={(value: ClimateFan) => setStructuredState((current) => ({ ...current, fan: value }))}
-                  >
-                    <SelectTrigger className="rounded-2xl">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="auto">Auto</SelectItem>
-                      <SelectItem value="1">Level 1</SelectItem>
-                      <SelectItem value="2">Level 2</SelectItem>
-                      <SelectItem value="3">Level 3</SelectItem>
-                      <SelectItem value="4">Level 4</SelectItem>
-                      <SelectItem value="silent">Silent</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </ControlBlock>
+                    >
+                      <SelectTrigger className="rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto">{t("climate.fanLevels.auto")}</SelectItem>
+                        <SelectItem value="1">{t("climate.fanLevels.level", { level: 1 })}</SelectItem>
+                        <SelectItem value="2">{t("climate.fanLevels.level", { level: 2 })}</SelectItem>
+                        <SelectItem value="3">{t("climate.fanLevels.level", { level: 3 })}</SelectItem>
+                        <SelectItem value="4">{t("climate.fanLevels.level", { level: 4 })}</SelectItem>
+                        <SelectItem value="silent">{t("climate.fanLevels.silent")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </ControlBlock>
 
-                <ControlBlock label="Vertical Vane">
+                <ControlBlock label={t("climate.verticalVane")}>
                   <Select
                     value={structuredState.vane}
                     onValueChange={(value: ClimateVane) => setStructuredState((current) => ({ ...current, vane: value }))}
-                  >
-                    <SelectTrigger className="rounded-2xl">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="auto">Auto</SelectItem>
-                      <SelectItem value="highest">Highest</SelectItem>
-                      <SelectItem value="high">High</SelectItem>
-                      <SelectItem value="middle">Middle</SelectItem>
-                      <SelectItem value="low">Low</SelectItem>
-                      <SelectItem value="lowest">Lowest</SelectItem>
-                      <SelectItem value="swing">Swing</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </ControlBlock>
+                    >
+                      <SelectTrigger className="rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto">{t("climate.vanes.auto")}</SelectItem>
+                        <SelectItem value="highest">{t("climate.vanes.highest")}</SelectItem>
+                        <SelectItem value="high">{t("climate.vanes.high")}</SelectItem>
+                        <SelectItem value="middle">{t("climate.vanes.middle")}</SelectItem>
+                        <SelectItem value="low">{t("climate.vanes.low")}</SelectItem>
+                        <SelectItem value="lowest">{t("climate.vanes.lowest")}</SelectItem>
+                        <SelectItem value="swing">{t("climate.vanes.swing")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </ControlBlock>
 
-                <ControlBlock label="Timer Mode">
+                <ControlBlock label={t("climate.timerMode")}>
                   <Select
                     value={structuredState.timerMode}
                     onValueChange={(value: ClimateTimerMode) => setStructuredState((current) => ({ ...current, timerMode: value }))}
-                  >
-                    <SelectTrigger className="rounded-2xl">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">None</SelectItem>
-                      <SelectItem value="stop">Stop only</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </ControlBlock>
+                    >
+                      <SelectTrigger className="rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">{t("climate.timerModes.none")}</SelectItem>
+                        <SelectItem value="stop">{t("climate.timerModes.stop")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </ControlBlock>
 
-                <ControlBlock label="Stop Time">
+                <ControlBlock label={t("climate.stopTime")}>
                   <div className="grid grid-cols-2 gap-2">
                     <Input value={structuredState.stopHour} className="rounded-2xl" onChange={(event) => setStructuredState((current) => ({ ...current, stopHour: sanitizeTimePart(event.target.value, 23) }))} />
                     <Input value={structuredState.stopMinute} className="rounded-2xl" onChange={(event) => setStructuredState((current) => ({ ...current, stopMinute: sanitizeMinutePart(event.target.value) }))} />
@@ -307,8 +307,8 @@ export function BroadlinkClimateControl({
 
               <div className="mt-4 grid gap-3 md:grid-cols-2">
                 <ToggleCard
-                  title="Econo cool"
-                  description="Only meaningful in cool mode."
+                  title={t("climate.econoCool")}
+                  description={t("climate.econoCoolDescription")}
                   checked={structuredState.econo}
                   disabled={structuredState.mode !== "cool"}
                   onCheckedChange={(checked) => setStructuredState((current) => ({ ...current, econo: checked }))}
@@ -316,7 +316,7 @@ export function BroadlinkClimateControl({
               </div>
 
               <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3">
-                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Generated command</div>
+                <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{t("climate.generatedCommand")}</div>
                 <div className="mt-1 break-all font-mono text-sm text-slate-800">{structuredCommand}</div>
               </div>
 
@@ -327,7 +327,7 @@ export function BroadlinkClimateControl({
                   onClick={() => sendMutation.mutate(structuredCommand)}
                 >
                   {sendMutation.isPending && sendMutation.variables === structuredCommand ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Send structured command
+                  {t("climate.sendStructuredCommand")}
                 </Button>
                 <Button
                   variant="outline"
@@ -335,7 +335,7 @@ export function BroadlinkClimateControl({
                   disabled={sendMutation.isPending}
                   onClick={() => sendMutation.mutate("state-off")}
                 >
-                  Send off
+                  {t("climate.sendOff")}
                 </Button>
               </div>
             </div>

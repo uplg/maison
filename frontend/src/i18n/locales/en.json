@@ -328,7 +328,10 @@
     "simpleDescription": "A clear, compact, local remote.",
     "dashboardTitle": "Climate",
     "dashboardSubtitle": "RM4 Pro remote for the Mitsubishi AC.",
+    "brandName": "Mitsubishi",
+    "structuredDescription": "Build a full `state-*` command and send it directly to the RM4 Pro.",
     "remoteConnected": "RM4 Pro connected",
+    "remoteFallbackHost": "RM4 Pro",
     "searchingTitle": "Looking for the RM4 Pro",
     "searchingDescription": "Automatic discovery on the local network...",
     "noRemoteTitle": "No remote found on the network",
@@ -336,7 +339,47 @@
     "noCommands": "No saved Mitsubishi commands found.",
     "commandSent": "Command sent",
     "commandSentDescription": "Scene {{command}} was sent through Broadlink remote {{host}}.",
-    "commandFailed": "Unable to send command"
+    "commandFailed": "Unable to send command",
+    "reset": "Reset",
+    "power": "Power",
+    "on": "On",
+    "off": "Off",
+    "mode": "Mode",
+    "temperature": "Temperature",
+    "fan": "Fan",
+    "verticalVane": "Vertical vane",
+    "timerMode": "Timer mode",
+    "stopTime": "Stop time",
+    "econoCool": "Econo cool",
+    "econoCoolDescription": "Only meaningful in cool mode.",
+    "generatedCommand": "Generated command",
+    "sendStructuredCommand": "Send structured command",
+    "sendOff": "Send off",
+    "modes": {
+      "cool": "Cool",
+      "heat": "Heat",
+      "dry": "Dry",
+      "fan": "Fan",
+      "auto": "Auto"
+    },
+    "fanLevels": {
+      "auto": "Auto",
+      "level": "Level {{level}}",
+      "silent": "Silent"
+    },
+    "vanes": {
+      "auto": "Auto",
+      "highest": "Highest",
+      "high": "High",
+      "middle": "Middle",
+      "low": "Low",
+      "lowest": "Lowest",
+      "swing": "Swing"
+    },
+    "timerModes": {
+      "none": "None",
+      "stop": "Stop only"
+    }
   },
   "tempo": {
     "title": "Tempo EDF",
