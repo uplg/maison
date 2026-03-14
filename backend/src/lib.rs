@@ -4,6 +4,7 @@ pub mod config;
 pub mod error;
 pub mod hue;
 pub mod meross;
+pub mod mitsubishi_ir;
 pub mod routes;
 pub mod tempo;
 pub mod tuya;

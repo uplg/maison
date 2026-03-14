@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
-use crate::error::AppError;
+use crate::{error::AppError, mitsubishi_ir};
 
 const DEFAULT_LEARN_TIMEOUT_SECS: u64 = 30;
 
@@ -365,6 +365,15 @@ impl BroadlinkManager {
         model: Option<String>,
     ) -> Result<SendResult, AppError> {
         let normalized_command = normalize_lookup_value(&command);
+        if let Some(packet) = mitsubishi_ir::encode_mitsubishi_command(&normalized_command)
+            .map_err(|error| AppError::http(axum::http::StatusCode::BAD_REQUEST, error))?
+        {
+            let packet_base64 = STANDARD.encode(&packet);
+            return self
+                .send_packet(host, local_ip, packet_base64, None, Some(normalized_command))
+                .await;
+        }
+
         let normalized_model = model.as_deref().map(normalize_lookup_value);
 
         let codes = self.codes.read().await;
