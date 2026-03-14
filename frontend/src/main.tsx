@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import { Toaster } from "./components/ui/toaster";
 import App from "./App";
+import { cleanupLegacyPwaArtifacts } from "./lib/pwa";
 import "./i18n";
 import "./index.css";
 
@@ -15,6 +16,8 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+void cleanupLegacyPwaArtifacts();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
