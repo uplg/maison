@@ -20,7 +20,6 @@ const MIN_CALIBRATION_SAMPLES: usize = 120;
 const TARIFS_CACHE_SECONDS: i64 = 24 * 60 * 60;
 const HISTORY_CACHE_SECONDS: i64 = 6 * 60 * 60;
 const FORECAST_CACHE_SECONDS: i64 = 3 * 60 * 60;
-const PREDICTIONS_CACHE_SECONDS: i64 = 30 * 60;
 const STATE_CACHE_SECONDS: i64 = 60 * 60;
 
 const STOCK_RED_DAYS: i32 = 22;
@@ -352,7 +351,6 @@ struct TempoCache {
     tarifs: Option<Cached<Option<TempoTarifs>>>,
     history: HashMap<String, Cached<HashMap<String, String>>>,
     forecast: Option<Cached<Vec<ForecastDay>>>,
-    predictions: Option<Cached<TempoPredictionServiceResponse>>,
     state: Option<Cached<TempoState>>,
 }
 
@@ -441,10 +439,6 @@ impl TempoService {
     }
 
     pub async fn get_predictions(&self) -> Result<TempoPredictionServiceResponse, AppError> {
-        if let Some(cached) = self.cached_predictions(false).await {
-            return Ok(cached);
-        }
-
         let state = self.get_state().await?;
         let season = state.season.clone();
         let history = self.fetch_history_map(&season).await?;
@@ -482,12 +476,6 @@ impl TempoService {
                 "hybrid-default-1.0.0".to_string()
             }),
         };
-
-        self.cache.write().await.predictions = Some(Cached {
-            value: response.clone(),
-            fetched_at: Utc::now(),
-        });
-
         Ok(response)
     }
 
@@ -814,8 +802,17 @@ impl TempoService {
     }
 
     async fn fetch_temperature_forecast(&self, days: usize) -> Result<Vec<ForecastDay>, AppError> {
+        let today = paris_today();
+
         if let Some(cached) = self.cached_forecast(false).await {
-            return Ok(cached.into_iter().take(days).collect());
+            let upcoming = cached
+                .into_iter()
+                .filter(|day| day.date >= today)
+                .take(days)
+                .collect::<Vec<_>>();
+            if upcoming.len() == days {
+                return Ok(upcoming);
+            }
         }
 
         if let Ok(content) = std::fs::read_to_string(&self.forecast_cache_path) {
@@ -831,9 +828,10 @@ impl TempoService {
                                 temperature_mean: entry.temperature_mean,
                             })
                     })
+                    .filter(|day| day.date >= today)
                     .collect::<Vec<_>>();
 
-                if !forecast.is_empty() {
+                if forecast.len() >= days {
                     self.cache.write().await.forecast = Some(Cached {
                         value: forecast.clone(),
                         fetched_at: Utc::now(),
@@ -857,12 +855,23 @@ impl TempoService {
             .await?;
 
         if !response.status().is_success() {
-            return self.cached_forecast(true).await.ok_or_else(|| {
-                AppError::service_unavailable(format!(
-                    "Failed to fetch temperature forecast: {}",
-                    response.status()
-                ))
-            });
+            return self
+                .cached_forecast(true)
+                .await
+                .map(|forecast| {
+                    forecast
+                        .into_iter()
+                        .filter(|day| day.date >= today)
+                        .take(days)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|forecast| !forecast.is_empty())
+                .ok_or_else(|| {
+                    AppError::service_unavailable(format!(
+                        "Failed to fetch temperature forecast: {}",
+                        response.status()
+                    ))
+                });
         }
 
         let payload: OpenMeteoForecastResponse = response.json().await?;
@@ -879,6 +888,7 @@ impl TempoService {
                         temperature_mean,
                     })
             })
+            .filter(|day| day.date >= today)
             .collect::<Vec<_>>();
 
         self.cache.write().await.forecast = Some(Cached {
@@ -926,17 +936,6 @@ impl TempoService {
         let cached = cache.forecast.as_ref()?;
         let age = Utc::now() - cached.fetched_at;
         if allow_expired || age < Duration::seconds(FORECAST_CACHE_SECONDS) {
-            Some(cached.value.clone())
-        } else {
-            None
-        }
-    }
-
-    async fn cached_predictions(&self, allow_expired: bool) -> Option<TempoPredictionServiceResponse> {
-        let cache = self.cache.read().await;
-        let cached = cache.predictions.as_ref()?;
-        let age = Utc::now() - cached.fetched_at;
-        if allow_expired || age < Duration::seconds(PREDICTIONS_CACHE_SECONDS) {
             Some(cached.value.clone())
         } else {
             None

@@ -4,6 +4,8 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
+use chrono::Utc;
+use chrono_tz::Europe::Paris;
 use cat_monitor_rust_backend::{auth::Claims, build_app_from_config, config::Config};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use serde_json::Value;
@@ -34,9 +36,14 @@ async fn tempo_predictions_return_forecast_entries() {
         .and_then(Value::as_array)
         .expect("predictions should be an array");
     assert_eq!(predictions.len(), 7);
+    let expected_first_date = Utc::now()
+        .with_timezone(&Paris)
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
     assert_eq!(
         predictions.first().and_then(|day| day.get("date")).and_then(Value::as_str),
-        Some("2026-03-13")
+        Some(expected_first_date.as_str())
     );
     assert!(predictions.iter().all(|day| day.get("predicted_color").is_some()));
 }
