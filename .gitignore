@@ -5,6 +5,7 @@
 logs/
 *.log
 *.pid
+.zigbee2mqtt.pid
 
 # Frontend
 frontend/node_modules/
@@ -23,6 +24,8 @@ users.json
 meross-devices.json
 hue-lamps.json
 hue-lamps-blacklist.json
+zigbee-lamps.json
+zigbee-lamps-blacklist.json
 broadlink-codes.json
 
 # Mosquitto runtime data

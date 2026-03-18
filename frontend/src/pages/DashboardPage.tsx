@@ -1,13 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { devicesApi, hueLampsApi, merossApi, type Device } from "@/lib/api";
+import { devicesApi, hueLampsApi, merossApi, zigbeeLampsApi, type Device } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { HueLampCard } from "@/components/devices/HueLampControl";
+import { ZigbeeLampCard, ZigbeePairingPanel } from "@/components/devices/ZigbeeLampControl";
 import { BroadlinkClimateControl } from "@/components/devices/BroadlinkClimateControl";
 import { MerossPlugCard } from "@/components/devices/MerossPlugControl";
 import { TempoCard } from "@/components/devices/TempoCard";
@@ -195,6 +196,20 @@ export function DashboardPage() {
   // Check if Hue lamps are disabled (Docker mode)
   const isHueDisabled = hueLampsStats?.disabled === true;
 
+  const { data: zigbeeLampsData, isLoading: isLoadingZigbeeLamps } = useQuery({
+    queryKey: ["zigbee-lamps"],
+    queryFn: zigbeeLampsApi.list,
+    refetchInterval: 5000,
+  });
+
+  const { data: zigbeeLampsStats } = useQuery({
+    queryKey: ["zigbee-lamps-stats"],
+    queryFn: zigbeeLampsApi.stats,
+    staleTime: 60000,
+  });
+
+  const isZigbeeDisabled = zigbeeLampsStats?.disabled === true;
+
   // Meross plugs query
   const { data: merossPlugsData, isLoading: isLoadingMeross } = useQuery({
     queryKey: ["meross-plugs"],
@@ -336,6 +351,45 @@ export function DashboardPage() {
           {hueLampsData?.lamps && hueLampsData.lamps.length > 0 && (
             <div className="text-center text-sm text-muted-foreground">
               {t("hueLamps.lampCount", { count: hueLampsData.total })} - {t("hueLamps.connectedCount", { count: hueLampsData.connected })}
+            </div>
+          )}
+        </section>
+      )}
+
+      {!isZigbeeDisabled && (
+        <section className="space-y-4">
+          <DashboardSectionHeader
+            icon={<Lightbulb className="h-5 w-5" />}
+            iconClassName="bg-amber-100 text-amber-700"
+            title={t("zigbeeLamps.title")}
+            description={t("zigbeeLamps.subtitle")}
+            actions={<ZigbeePairingPanel />}
+          />
+
+          {isLoadingZigbeeLamps ? (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <Skeleton className="h-40" />
+              <Skeleton className="h-40" />
+            </div>
+          ) : zigbeeLampsData?.lamps && zigbeeLampsData.lamps.length > 0 ? (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {zigbeeLampsData.lamps.map((lamp) => (
+                <ZigbeeLampCard key={lamp.id} lamp={lamp} />
+              ))}
+            </div>
+          ) : (
+            <Card className="border-0 bg-white/85 p-8 text-center shadow-sm">
+              <Lightbulb className="mx-auto h-12 w-12 text-muted-foreground opacity-50" />
+              <p className="mt-4 text-muted-foreground">{t("zigbeeLamps.noLamps")}</p>
+              <p className="mt-2 text-sm text-muted-foreground">{t("zigbeeLamps.noLampsHint")}</p>
+            </Card>
+          )}
+
+          {zigbeeLampsData?.lamps && zigbeeLampsData.lamps.length > 0 && (
+            <div className="text-center text-sm text-muted-foreground">
+              {t("zigbeeLamps.lampCount", { count: zigbeeLampsData.total })} - {t("zigbeeLamps.connectedCount", {
+                count: zigbeeLampsData.connected,
+              })}
             </div>
           )}
         </section>

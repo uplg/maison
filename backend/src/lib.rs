@@ -8,6 +8,7 @@ pub mod mitsubishi_ir;
 pub mod routes;
 pub mod tempo;
 pub mod tuya;
+pub mod zigbee;
 
 pub use tempo::TempoService;
 
@@ -23,6 +24,7 @@ use routes::auth::{load_users, SharedUsers};
 use meross::MerossManager;
 use tuya::TuyaManager;
 use tower_http::trace::TraceLayer;
+use zigbee::ZigbeeManager;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -34,6 +36,7 @@ pub struct AppState {
     pub(crate) meross: MerossManager,
     pub(crate) tempo: TempoService,
     pub(crate) tuya: TuyaManager,
+    pub(crate) zigbee: ZigbeeManager,
 }
 
 pub fn app_from_env() -> Result<Router, AppError> {
@@ -59,6 +62,7 @@ pub fn build_app_parts_from_config(config: Arc<Config>) -> Result<(Router, AppSt
     let meross = MerossManager::new(&config.meross_devices_path)?;
     let tempo = TempoService::new(config.source_root.clone())?;
     let tuya = TuyaManager::new(&config.devices_path, &config.device_cache_path)?;
+    let zigbee = ZigbeeManager::new(config.as_ref())?;
 
     let state = AppState {
         config,
@@ -69,6 +73,7 @@ pub fn build_app_parts_from_config(config: Arc<Config>) -> Result<(Router, AppSt
         meross,
         tempo,
         tuya,
+        zigbee,
     };
 
     let startup_tuya = state.tuya.clone();
@@ -96,7 +101,8 @@ pub fn build_app(state: AppState) -> Router {
         .nest("/devices", routes::devices::router())
         .nest("/hue-lamps", routes::hue::router())
         .nest("/meross", routes::meross::router())
-        .nest("/tempo", routes::tempo::router());
+        .nest("/tempo", routes::tempo::router())
+        .nest("/zigbee", routes::zigbee::router());
 
     Router::<AppState>::new()
         .merge(routes::root::router())
@@ -119,5 +125,6 @@ impl AppState {
 
     pub async fn shutdown(&self) {
         self.hue.shutdown().await;
+        self.zigbee.shutdown().await;
     }
 }

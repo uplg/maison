@@ -1,0 +1,17 @@
+[Unit]
+Description=zigbee2mqtt
+After=network.target
+
+[Service]
+Environment=NODE_ENV=production
+Type=simple
+WorkingDirectory=/opt/zigbee2mqtt
+ExecStart=/usr/bin/env pnpm start
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+User=catmonitor
+
+[Install]
+WantedBy=multi-user.target

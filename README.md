@@ -5,7 +5,7 @@
 - Monitor and control local home devices from a single interface.
 - Manage Tuya-based devices such as feeders, fountains, and litter boxes.
 - Track energy and status data for Meross plugs.
-- Control Philips Hue lamps, including power, brightness, and color temperature (through Bluetooth, Zigbee coming soon.)
+- Control Philips Hue lamps over Bluetooth and Zigbee.
 - Query Tempo data, predictions, history, and calibration helpers.
 - Keep access private with local authentication and secure session cookies.
 
@@ -26,6 +26,9 @@ The Rust backend reads these files directly from the repo root:
 - `meross-devices.json`
 - `hue-lamps.json`
 - `hue-lamps-blacklist.json`
+- `zigbee-lamps.json`
+- `zigbee-lamps-blacklist.json`
+- `zigbee2mqtt/`
 - `mosquitto/`
 
 Tempo cache and calibration files now live in `cache/tempo/`.
@@ -49,6 +52,11 @@ Main settings:
 - `PORT` / `API_PORT`: Rust backend port, default `3033`
 - `JWT_SECRET`: auth signing secret
 - `DISABLE_BLUETOOTH`: set `true` to disable Hue BLE support
+- `MQTT_HOST` / `MQTT_PORT`: local MQTT broker used by Zigbee2MQTT and the backend
+- `ZIGBEE_ENABLED`: set `true` to start Zigbee2MQTT from `make start`
+- `ZIGBEE_SERIAL_PORT`: serial path of the Zigbee dongle
+- `ZIGBEE_ADAPTER`: adapter type, `ember` for the Sonoff Dongle Lite MG21
+- `ZIGBEE2MQTT_DIR`: local installation directory of Zigbee2MQTT
 - `AUTH_COOKIE_NAME`: session cookie name
 - `AUTH_COOKIE_SECURE`: keep `true` when the app is exposed through HTTPS/Cloudflare
 - `AUTH_RATE_LIMIT_ATTEMPTS`: max failed login attempts per IP+username window
@@ -100,6 +108,23 @@ make frontend
 
 The frontend proxies `/api` to `http://localhost:3033` by default.
 
+## Zigbee2MQTT on host
+
+Zigbee2MQTT now runs directly on the host, not in Docker.
+
+- macOS and Linux both use the same app structure: host backend + host Zigbee2MQTT + Docker frontend/Mosquitto
+- the Sonoff Dongle Lite MG21 should use `adapter: ember`
+- repository config lives in `zigbee2mqtt/configuration.yaml`
+- full setup instructions are in `docs/zigbee2mqtt-host-setup.md`
+
+Useful targets:
+
+```bash
+make zigbee2mqtt
+make zigbee2mqtt-start
+make zigbee2mqtt-stop
+```
+
 ## Docker
 
 Docker is kept only for the frontend, Mosquitto, and the optional Cloudflare tunnel.
@@ -138,9 +163,10 @@ make start
 This starts:
 
 - the Rust backend on the host
+- Zigbee2MQTT on the host when `ZIGBEE_ENABLED=true`
 - the frontend container
-- the Mosquitto container (for Meross devices, avoid flashing light)
-- the Cloudflare tunnel container
+- the Mosquitto container
+- optionally the Cloudflare tunnel container
 
 Stop everything:
 
@@ -156,5 +182,4 @@ make stop
 ### Planned
 
 - Unify code, everything is a device, no more "specific" types everything derived from base "object".
-- Zigbee integration (using a Sonoff USB dongle)
 - Matter bridge (but will not handle cats-related devices such as litter as it's not yet in the specification.)

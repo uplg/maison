@@ -21,6 +21,7 @@ jsonwebtoken = { version = "10.3.0", default-features = false, features = ["rust
 md5 = "0.8.0"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "query", "rustls"] }
 rbroadlink = "0.4.2"
+rumqttc = "0.24.0"
 rust-async-tuyapi = { git = "https://github.com/uplg/rust-async-tuyapi", branch = "main" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

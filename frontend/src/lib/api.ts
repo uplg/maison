@@ -352,6 +352,119 @@ export const hueLampsApi = {
     }),
 };
 
+export interface ZigbeeLampState {
+  isOn: boolean;
+  brightness: number;
+  temperature: number | null;
+  temperatureMin: number | null;
+  temperatureMax: number | null;
+}
+
+export interface ZigbeeLamp {
+  id: string;
+  name: string;
+  address: string;
+  friendlyName: string;
+  linkQuality: number | null;
+  interviewCompleted: boolean;
+  model: string | null;
+  manufacturer: string;
+  firmware: string | null;
+  connected: boolean;
+  reachable: boolean;
+  supportsBrightness: boolean;
+  supportsTemperature: boolean;
+  state: ZigbeeLampState;
+  lastSeen: string | null;
+}
+
+export interface ZigbeeLampsResponse {
+  success: boolean;
+  lamps: ZigbeeLamp[];
+  total: number;
+  connected: number;
+  reachable: number;
+  message: string;
+}
+
+export interface ZigbeeLampStatusResponse {
+  success: boolean;
+  lamp?: ZigbeeLamp;
+  message?: string;
+  error?: string;
+}
+
+export interface ZigbeePairingStatus {
+  active: boolean;
+  remainingSeconds: number;
+  permitJoinSeconds: number;
+  message?: string;
+}
+
+export interface ZigbeePairingResponse {
+  success: boolean;
+  pairing: ZigbeePairingStatus;
+  message: string;
+}
+
+export interface ZigbeeLampActionResponse {
+  success: boolean;
+  state?: ZigbeeLampState;
+  message?: string;
+  error?: string;
+}
+
+export interface ZigbeeSimpleResponse {
+  success: boolean;
+  message: string;
+}
+
+export const zigbeeLampsApi = {
+  list: () => api<ZigbeeLampsResponse>("/zigbee/lamps"),
+
+  stats: () =>
+    api<{
+      success: boolean;
+      total: number;
+      connected: number;
+      reachable: number;
+      disabled?: boolean;
+      message?: string;
+    }>("/zigbee/lamps/stats"),
+
+  status: (lampId: string) => api<ZigbeeLampStatusResponse>(`/zigbee/lamps/${lampId}`),
+
+  pairingStatus: () => api<ZigbeePairingResponse>("/zigbee/lamps/pairing/status"),
+
+  startPairing: () => api<ZigbeePairingResponse>("/zigbee/lamps/pairing/start", { method: "POST" }),
+
+  stopPairing: () => api<ZigbeePairingResponse>("/zigbee/lamps/pairing/stop", { method: "POST" }),
+
+  power: (lampId: string, enabled: boolean) =>
+    api<ZigbeeLampActionResponse>(`/zigbee/lamps/${lampId}/power`, {
+      method: "POST",
+      body: { enabled },
+    }),
+
+  brightness: (lampId: string, brightness: number) =>
+    api<ZigbeeLampActionResponse>(`/zigbee/lamps/${lampId}/brightness`, {
+      method: "POST",
+      body: { brightness },
+    }),
+
+  temperature: (lampId: string, temperature: number) =>
+    api<ZigbeeLampActionResponse>(`/zigbee/lamps/${lampId}/temperature`, {
+      method: "POST",
+      body: { temperature },
+    }),
+
+  rename: (lampId: string, name: string) =>
+    api<ZigbeeSimpleResponse>(`/zigbee/lamps/${lampId}/rename`, {
+      method: "POST",
+      body: { name },
+    }),
+};
+
 // Meross Smart Plug types
 export interface MerossPlug {
   id: string;
