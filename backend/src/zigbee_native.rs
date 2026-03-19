@@ -441,6 +441,8 @@ async fn run_native_driver(
                 let result = handle_command(&mut context, request.command).await;
                 if let Err(error) = &result {
                     warn!(serial_port = %serial_port, error = %error, "native zigbee command failed");
+                } else {
+                    sync_status_devices(&status, &context.joined_devices).await;
                 }
                 if let Err(error) = request.reply_tx.send(result) {
                     warn!(error = ?error, "native zigbee command response receiver dropped");
