@@ -173,6 +173,38 @@ impl Config {
             zigbee_permit_join_seconds,
         }
     }
+
+    #[cfg(test)]
+    pub fn for_tests(source_root: PathBuf) -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 3033,
+            jwt_secret: "test-secret".to_string(),
+            frontend_dist_dir: source_root.join("frontend").join("dist"),
+            auth_cookie_name: "maison_session".to_string(),
+            auth_cookie_secure: false,
+            auth_rate_limit_attempts: 10,
+            auth_rate_limit_window_seconds: 300,
+            disable_bluetooth: true,
+            users_path: source_root.join("users.json"),
+            meross_devices_path: source_root.join("meross-devices.json"),
+            devices_path: source_root.join("devices.json"),
+            device_cache_path: source_root.join("device-cache.json"),
+            broadlink_codes_path: source_root.join("broadlink-codes.json"),
+            hue_lamps_path: source_root.join("hue-lamps.json"),
+            hue_blacklist_path: source_root.join("hue-lamps-blacklist.json"),
+            zigbee_lamps_path: source_root.join("zigbee-lamps.json"),
+            zigbee_lamps_blacklist_path: source_root.join("zigbee-lamps-blacklist.json"),
+            mqtt_host: "127.0.0.1".to_string(),
+            mqtt_port: 1883,
+            mqtt_username: None,
+            mqtt_password: None,
+            mqtt_client_id: "cat-monitor-tests".to_string(),
+            z2m_base_topic: "zigbee2mqtt".to_string(),
+            zigbee_permit_join_seconds: 120,
+            source_root,
+        }
+    }
 }
 
 fn default_source_root() -> PathBuf {

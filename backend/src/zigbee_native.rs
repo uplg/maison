@@ -13,7 +13,7 @@ use ezsp::{
         network::{Duration as NetworkDuration, Parameters as EmberNetworkParameters, Status as EmberNetworkStatus},
         security::initial,
     },
-    ezsp::{config, network::InitBitmask as NetworkInitBitmask},
+    ezsp::{config, decision, network::InitBitmask as NetworkInitBitmask, policy},
     parameters,
     uart::Uart as EzspUart,
 };
@@ -30,10 +30,17 @@ const DEFAULT_EZSP_PROTOCOL_VERSION: u8 = 13;
 const EZSP_CHANNEL_SIZE: usize = 64;
 const EZSP_INIT_TIMEOUT: StdDuration = StdDuration::from_secs(5);
 const POLL_INTERVAL: StdDuration = StdDuration::from_millis(200);
+const DISCOVERY_RETRY_INTERVAL_TICKS: u32 = 10;
+const STARTUP_DISCOVERY_TIMEOUT: StdDuration = StdDuration::from_millis(750);
 const ZDO_PROFILE_ID: u16 = 0x0000;
 const ZCL_GLOBAL_FRAME_CONTROL: u8 = 0x00;
+const ZCL_CLUSTER_COMMAND_FRAME_CONTROL: u8 = 0x11;
 const ZCL_READ_ATTRIBUTES_COMMAND_ID: u8 = 0x00;
 const ZCL_READ_ATTRIBUTES_RESPONSE_COMMAND_ID: u8 = 0x01;
+const ZCL_ON_OFF_COMMAND_OFF: u8 = 0x00;
+const ZCL_ON_OFF_COMMAND_ON: u8 = 0x01;
+const ZCL_LEVEL_CONTROL_COMMAND_MOVE_TO_LEVEL: u8 = 0x04;
+const ZCL_COLOR_CONTROL_COMMAND_MOVE_TO_COLOR_TEMPERATURE: u8 = 0x0a;
 const BASIC_CLUSTER_ID: u16 = 0x0000;
 const HOME_AUTOMATION_PROFILE_ID: u16 = 0x0104;
 const SIMPLE_DESC_REQ_CLUSTER_ID: u16 = 0x0004;
@@ -106,7 +113,7 @@ pub struct NativeKnownDevice {
 }
 
 #[derive(Debug, Default)]
-struct NativeZigbeeStatus {
+pub(crate) struct NativeZigbeeStatus {
     connected: bool,
     message: Option<String>,
     last_error: Option<String>,
@@ -118,10 +125,17 @@ struct DriverRequest {
     reply_tx: oneshot::Sender<Result<(), AppError>>,
 }
 
-enum DriverLifecycle {
+pub(crate) enum DriverLifecycle {
     Starting,
     Ready,
     Failed(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DriverNetworkState {
+    Unknown,
+    NoNetwork,
+    Joined,
 }
 
 #[derive(Clone)]
@@ -132,6 +146,7 @@ pub struct NativeZigbeeRuntime {
     task: Arc<std::sync::Mutex<Option<JoinHandle<()>>>>,
     init_once: Arc<Mutex<bool>>,
     lifecycle: Arc<RwLock<DriverLifecycle>>,
+    network_state: Arc<RwLock<DriverNetworkState>>,
     adapter: Arc<String>,
     serial_port: Arc<Option<String>>,
     known_devices: Arc<Vec<NativeKnownDevice>>,
@@ -160,6 +175,7 @@ impl NativeZigbeeRuntime {
             task: Arc::new(std::sync::Mutex::new(None)),
             init_once: Arc::new(Mutex::new(false)),
             lifecycle: Arc::new(RwLock::new(DriverLifecycle::Starting)),
+            network_state: Arc::new(RwLock::new(DriverNetworkState::Unknown)),
             adapter: Arc::new(adapter_label),
             serial_port: Arc::new(serial_port_label),
             known_devices: Arc::new(known_devices),
@@ -182,6 +198,29 @@ impl NativeZigbeeRuntime {
         self.status.read().await.devices.clone()
     }
 
+    #[cfg(test)]
+    pub(crate) async fn test_seed_devices(&self, devices: Vec<NativeDiscoveredDevice>) {
+        let mut status = self.status.write().await;
+        status.connected = true;
+        status.devices = devices;
+        status.message = None;
+        status.last_error = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn test_set_lifecycle(&self, lifecycle: DriverLifecycle) {
+        *self.lifecycle.write().await = lifecycle;
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn test_set_network_state(&self, state: &str) {
+        *self.network_state.write().await = match state {
+            "joined" => DriverNetworkState::Joined,
+            "no-network" => DriverNetworkState::NoNetwork,
+            _ => DriverNetworkState::Unknown,
+        };
+    }
+
     pub async fn ensure_initialized(&self) {
         self.start_task_if_needed().await;
 
@@ -196,6 +235,15 @@ impl NativeZigbeeRuntime {
             status.connected = false;
             status.last_error = Some(error.to_string());
             status.message = Some("Native Zigbee initialization timed out".to_string());
+            return;
+        }
+
+        if let Err(error) = wait_for_joined_network(&self.network_state).await {
+            warn!(adapter = %self.adapter, serial_port = ?self.serial_port, error = %error, "native zigbee network did not become joined before discovery");
+            let mut status = self.status.write().await;
+            status.connected = false;
+            status.last_error = Some(error.to_string());
+            status.message = Some(format!("Native Zigbee network not joined: {error}"));
             return;
         }
 
@@ -252,9 +300,10 @@ impl NativeZigbeeRuntime {
         let known_devices = (*self.known_devices).clone();
         let task_status = Arc::clone(&self.status);
         let lifecycle = Arc::clone(&self.lifecycle);
+        let network_state = Arc::clone(&self.network_state);
 
         let task = tokio::spawn(async move {
-            run_native_driver(adapter, serial_port, known_devices, task_status, lifecycle, command_rx).await;
+            run_native_driver(adapter, serial_port, known_devices, task_status, lifecycle, network_state, command_rx).await;
         });
 
         *self.task.lock().expect("native zigbee task mutex") = Some(task);
@@ -291,6 +340,7 @@ struct DiscoveredDevice {
     manufacturer: Option<String>,
     connected: bool,
     reachable: bool,
+    interview_attempts: u32,
 }
 
 async fn run_native_driver(
@@ -299,6 +349,7 @@ async fn run_native_driver(
     known_devices: Vec<NativeKnownDevice>,
     status: Arc<RwLock<NativeZigbeeStatus>>,
     lifecycle: Arc<RwLock<DriverLifecycle>>,
+    driver_network_state: Arc<RwLock<DriverNetworkState>>,
     mut command_rx: mpsc::Receiver<DriverRequest>,
 ) {
     let Some(serial_port) = serial_port else {
@@ -364,6 +415,8 @@ async fn run_native_driver(
         }
     };
 
+    *driver_network_state.write().await = ember_network_state_to_driver_state(network_state);
+
     *lifecycle.write().await = DriverLifecycle::Ready;
     set_status(
         &status,
@@ -377,6 +430,7 @@ async fn run_native_driver(
 
     let mut tick = interval(POLL_INTERVAL);
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut tick_count: u32 = 0;
 
     loop {
         tokio::select! {
@@ -393,6 +447,7 @@ async fn run_native_driver(
                 }
             }
             _ = tick.tick() => {
+                tick_count = tick_count.wrapping_add(1);
                 while let Ok(callback) = context.callbacks_rx.try_recv() {
                     if let Some(event) = handle_callback(&mut context, callback).await {
                         debug!(event = ?event, "native zigbee callback handled");
@@ -401,6 +456,11 @@ async fn run_native_driver(
                                 set_status(&status, true, Some(format!("Native Zigbee transport connected on {serial_port} ({adapter})")), None).await;
                             }
                             NativeZigbeeEvent::NetworkState { status: network_status } => {
+                                *driver_network_state.write().await = match network_status.as_str() {
+                                    "joined" => DriverNetworkState::Joined,
+                                    "no-network" => DriverNetworkState::NoNetwork,
+                                    _ => DriverNetworkState::Unknown,
+                                };
                                 set_status(&status, true, Some(format!("Native Zigbee network state: {network_status}")), None).await;
                             }
                             NativeZigbeeEvent::DeviceJoined { node_id, eui64 } => {
@@ -415,6 +475,11 @@ async fn run_native_driver(
                         }
                         sync_status_devices(&status, &context.joined_devices).await;
                     }
+                }
+
+                if tick_count % DISCOVERY_RETRY_INTERVAL_TICKS == 0 {
+                    retry_pending_interviews(&mut context).await;
+                    sync_status_devices(&status, &context.joined_devices).await;
                 }
             }
         }
@@ -508,6 +573,21 @@ async fn wait_for_driver_ready(lifecycle: &Arc<RwLock<DriverLifecycle>>) -> Resu
     ))
 }
 
+async fn wait_for_joined_network(network_state: &Arc<RwLock<DriverNetworkState>>) -> Result<(), AppError> {
+    for _ in 0..30 {
+        match *network_state.read().await {
+            DriverNetworkState::Joined => return Ok(()),
+            DriverNetworkState::NoNetwork | DriverNetworkState::Unknown => {
+                tokio::time::sleep(StdDuration::from_millis(200)).await;
+            }
+        }
+    }
+
+    Err(AppError::service_unavailable(
+        "Native Zigbee network did not report a joined state in time",
+    ))
+}
+
 async fn ensure_coordinator_network(
     context: &mut EzspContext,
     serial_port: &str,
@@ -566,6 +646,14 @@ async fn configure_stack(context: &mut EzspContext) -> Result<(), AppError> {
         .set_configuration_value(config::Id::SecurityLevel, DEFAULT_SECURITY_LEVEL)
         .await
         .map_err(map_ezsp_error("set security level"))?;
+    context
+        .uart
+        .set_policy(
+            policy::Id::MessageContentsInCallback,
+            u8::from(decision::Id::MessageTagOnlyInCallback),
+        )
+        .await
+        .map_err(map_ezsp_error("set message contents callback policy"))?;
     Ok(())
 }
 
@@ -763,9 +851,37 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
             }
             for target in targets {
                 info!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, endpoint = ?target.endpoint, "probing known Zigbee device");
-                request_active_endpoints(context, target.node_id).await?;
+                match tokio::time::timeout(
+                    STARTUP_DISCOVERY_TIMEOUT,
+                    request_active_endpoints(context, target.node_id),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, error = %error, "native zigbee active endpoint probe failed");
+                        continue;
+                    }
+                    Err(_) => {
+                        warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, timeout_ms = STARTUP_DISCOVERY_TIMEOUT.as_millis(), "native zigbee active endpoint probe timed out");
+                        continue;
+                    }
+                }
                 if target.endpoint.is_some() {
-                    let _ = refresh_device_state(context, &target).await;
+                    match tokio::time::timeout(
+                        STARTUP_DISCOVERY_TIMEOUT,
+                        refresh_device_state(context, &target),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, error = %error, "native zigbee state refresh failed during discovery");
+                        }
+                        Err(_) => {
+                            warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, timeout_ms = STARTUP_DISCOVERY_TIMEOUT.as_millis(), "native zigbee state refresh timed out during discovery");
+                        }
+                    }
                 }
             }
             Ok(())
@@ -798,7 +914,7 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 0,
             );
             let sequence = next_zdo_sequence(context);
-            let zcl_payload = vec![0x01_u8, sequence, if enabled { 0x01_u8 } else { 0x00_u8 }];
+            let zcl_payload = build_on_off_command_payload(enabled, sequence);
 
             context
                 .uart
@@ -832,9 +948,8 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 .ok_or_else(|| AppError::service_unavailable(format!(
                     "Lamp {lamp_id} has no discovered endpoint yet; run discovery first"
                 )))?;
-            let level = ((u16::from(brightness.min(100)) * 254) / 100).max(1) as u8;
             let sequence = next_zdo_sequence(context);
-            let zcl_payload = vec![0x01_u8, sequence, 0x04_u8, level, 0x00_u8, 0x00_u8];
+            let zcl_payload = build_brightness_command_payload(brightness, sequence);
             let aps_frame = EzspApsFrame::new(
                 HOME_AUTOMATION_PROFILE_ID,
                 0x0008,
@@ -878,17 +993,8 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 .ok_or_else(|| AppError::service_unavailable(format!(
                     "Lamp {lamp_id} has no discovered endpoint yet; run discovery first"
                 )))?;
-            let raw_temperature = 500_u16.saturating_sub((u16::from(temperature.min(100)) * (500 - 153)) / 100);
             let sequence = next_zdo_sequence(context);
-            let zcl_payload = vec![
-                0x01_u8,
-                sequence,
-                0x0a_u8,
-                (raw_temperature & 0xff) as u8,
-                (raw_temperature >> 8) as u8,
-                0x00_u8,
-                0x00_u8,
-            ];
+            let zcl_payload = build_color_temperature_command_payload(temperature, sequence);
             let aps_frame = EzspApsFrame::new(
                 HOME_AUTOMATION_PROFILE_ID,
                 0x0300,
@@ -1027,6 +1133,7 @@ async fn handle_callback(context: &mut EzspContext, callback: Callback) -> Optio
                             manufacturer: None,
                             connected: true,
                             reachable: true,
+                            interview_attempts: 0,
                         });
                     } else if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == node_id) {
                         device.connected = true;
@@ -1082,14 +1189,30 @@ async fn handle_trust_center_join(
             Some(NativeZigbeeEvent::DeviceJoined { node_id, eui64 })
         }
         EmberDeviceUpdate::DeviceLeft => {
-            context.joined_devices.retain(|device| device.node_id != node_id);
+            context.joined_devices.retain(|device| device.node_id != node_id && device.eui64 != eui64);
             None
         }
     }
 }
 
 fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) {
-    if context.joined_devices.iter().all(|device| device.node_id != node_id) {
+    if let Some(device) = context
+        .joined_devices
+        .iter_mut()
+        .find(|device| device.eui64 == eui64 || device.node_id == node_id)
+    {
+        device.node_id = node_id;
+        device.eui64 = eui64;
+        device.connected = true;
+        device.reachable = true;
+        device.is_on = true;
+        if device.brightness == 0 {
+            device.brightness = 100;
+        }
+        if device.endpoint.is_none() {
+            device.interview_attempts = 0;
+        }
+    } else {
         context.joined_devices.push(DiscoveredDevice {
             node_id,
             eui64,
@@ -1098,18 +1221,40 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
             output_clusters: Vec::new(),
             supports_brightness: false,
             supports_temperature: false,
-            is_on: false,
-            brightness: 0,
+            is_on: true,
+            brightness: 100,
             temperature: None,
             interview_completed: false,
             model: None,
             manufacturer: None,
             connected: true,
             reachable: true,
+            interview_attempts: 0,
         });
-    } else if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == node_id) {
-        device.connected = true;
-        device.reachable = true;
+    }
+}
+
+async fn retry_pending_interviews(context: &mut EzspContext) {
+    let retry_targets = context
+        .joined_devices
+        .iter()
+        .filter(|device| device.connected && device.endpoint.is_none() && device.interview_attempts < 20)
+        .map(|device| (device.node_id, device.eui64.clone(), device.interview_attempts))
+        .collect::<Vec<_>>();
+
+    for (node_id, eui64, attempts) in retry_targets {
+        debug!(
+            node_id = format_args!("0x{node_id:04x}"),
+            eui64,
+            attempts,
+            "retrying native zigbee endpoint discovery"
+        );
+        if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == node_id) {
+            device.interview_attempts = device.interview_attempts.saturating_add(1);
+        }
+        if let Err(error) = request_active_endpoints(context, node_id).await {
+            warn!(node_id = format_args!("0x{node_id:04x}"), error = %error, "native zigbee endpoint discovery retry failed");
+        }
     }
 }
 
@@ -1196,7 +1341,9 @@ async fn handle_incoming_cluster(
         }
         ACTIVE_EP_RSP_CLUSTER_ID => {
             if let Some(endpoints) = parse_active_ep_response(payload) {
-                for endpoint in endpoints {
+                let mut ordered_endpoints = endpoints;
+                ordered_endpoints.sort_by_key(|endpoint| if *endpoint == 242 { 1 } else { 0 });
+                for endpoint in ordered_endpoints {
                     let _ = request_simple_descriptor(context, node_id, endpoint).await;
                 }
             }
@@ -1217,7 +1364,7 @@ async fn handle_incoming_cluster(
                 if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == node_id) {
                     device.connected = true;
                     device.reachable = true;
-                    let should_replace_endpoint = device.endpoint.is_none()
+                    let should_replace_endpoint = (device.endpoint.is_none() && is_preferred_light_endpoint(&description))
                         || device.endpoint == Some(description.endpoint)
                         || (is_preferred_light_endpoint(&description)
                             && !device.input_clusters.contains(&ON_OFF_CLUSTER_ID)
@@ -1231,6 +1378,7 @@ async fn handle_incoming_cluster(
                         device.supports_brightness = description.input_clusters.contains(&LEVEL_CONTROL_CLUSTER_ID);
                         device.supports_temperature = description.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID);
                         device.interview_completed = true;
+                        device.interview_attempts = 0;
                         refresh_target = Some(device.clone());
                     }
                 }
@@ -1397,6 +1545,51 @@ fn parse_device_announce(payload: &[u8]) -> Option<DeviceAnnouncement> {
     })
 }
 
+fn build_on_off_command_payload(enabled: bool, sequence: u8) -> Vec<u8> {
+    vec![
+        ZCL_CLUSTER_COMMAND_FRAME_CONTROL,
+        sequence,
+        if enabled {
+            ZCL_ON_OFF_COMMAND_ON
+        } else {
+            ZCL_ON_OFF_COMMAND_OFF
+        },
+    ]
+}
+
+fn brightness_percent_to_level(brightness: u8) -> u8 {
+    ((u16::from(brightness.min(100)) * 254) / 100).max(1) as u8
+}
+
+fn build_brightness_command_payload(brightness: u8, sequence: u8) -> Vec<u8> {
+    let level = brightness_percent_to_level(brightness);
+    vec![
+        ZCL_CLUSTER_COMMAND_FRAME_CONTROL,
+        sequence,
+        ZCL_LEVEL_CONTROL_COMMAND_MOVE_TO_LEVEL,
+        level,
+        0x00,
+        0x00,
+    ]
+}
+
+fn temperature_percent_to_mireds(temperature: u8) -> u16 {
+    500_u16.saturating_sub((u16::from(temperature.min(100)) * (500 - 153)) / 100)
+}
+
+fn build_color_temperature_command_payload(temperature: u8, sequence: u8) -> Vec<u8> {
+    let raw_temperature = temperature_percent_to_mireds(temperature);
+    vec![
+        ZCL_CLUSTER_COMMAND_FRAME_CONTROL,
+        sequence,
+        ZCL_COLOR_CONTROL_COMMAND_MOVE_TO_COLOR_TEMPERATURE,
+        (raw_temperature & 0xff) as u8,
+        (raw_temperature >> 8) as u8,
+        0x00,
+        0x00,
+    ]
+}
+
 struct SimpleDescriptor {
     endpoint: u8,
     profile_id: u16,
@@ -1525,6 +1718,16 @@ fn network_state_label(state: EmberNetworkStatus) -> &'static str {
     }
 }
 
+fn ember_network_state_to_driver_state(state: EmberNetworkStatus) -> DriverNetworkState {
+    match state {
+        EmberNetworkStatus::JoinedNetwork => DriverNetworkState::Joined,
+        EmberNetworkStatus::JoiningNetwork
+        | EmberNetworkStatus::NoNetwork
+        | EmberNetworkStatus::JoinedNetworkNoParent
+        | EmberNetworkStatus::LeavingNetwork => DriverNetworkState::NoNetwork,
+    }
+}
+
 fn network_state_from_stack_status(status: ezsp::ember::Status) -> String {
     match status {
         ezsp::ember::Status::NetworkUp => "joined".to_string(),
@@ -1565,6 +1768,7 @@ fn seed_known_device(device: NativeKnownDevice) -> DiscoveredDevice {
         manufacturer: device.manufacturer,
         connected: false,
         reachable: false,
+        interview_attempts: 0,
     }
 }
 
@@ -1588,4 +1792,63 @@ fn hex_bytes(bytes: &[u8]) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ZCL_CLUSTER_COMMAND_FRAME_CONTROL, ZCL_COLOR_CONTROL_COMMAND_MOVE_TO_COLOR_TEMPERATURE,
+        ZCL_LEVEL_CONTROL_COMMAND_MOVE_TO_LEVEL, ZCL_ON_OFF_COMMAND_OFF, ZCL_ON_OFF_COMMAND_ON,
+        build_brightness_command_payload, build_color_temperature_command_payload,
+        build_on_off_command_payload, brightness_percent_to_level, temperature_percent_to_mireds,
+    };
+
+    #[test]
+    fn on_off_payload_uses_cluster_command_frame() {
+        assert_eq!(
+            build_on_off_command_payload(false, 0x34),
+            vec![ZCL_CLUSTER_COMMAND_FRAME_CONTROL, 0x34, ZCL_ON_OFF_COMMAND_OFF]
+        );
+        assert_eq!(
+            build_on_off_command_payload(true, 0x35),
+            vec![ZCL_CLUSTER_COMMAND_FRAME_CONTROL, 0x35, ZCL_ON_OFF_COMMAND_ON]
+        );
+    }
+
+    #[test]
+    fn brightness_payload_maps_percent_to_move_to_level() {
+        assert_eq!(brightness_percent_to_level(0), 1);
+        assert_eq!(brightness_percent_to_level(50), 127);
+        assert_eq!(brightness_percent_to_level(100), 254);
+        assert_eq!(
+            build_brightness_command_payload(50, 0x22),
+            vec![
+                ZCL_CLUSTER_COMMAND_FRAME_CONTROL,
+                0x22,
+                ZCL_LEVEL_CONTROL_COMMAND_MOVE_TO_LEVEL,
+                127,
+                0x00,
+                0x00,
+            ]
+        );
+    }
+
+    #[test]
+    fn color_temperature_payload_maps_percent_to_mireds() {
+        assert_eq!(temperature_percent_to_mireds(0), 500);
+        assert_eq!(temperature_percent_to_mireds(100), 153);
+        assert_eq!(temperature_percent_to_mireds(50), 327);
+        assert_eq!(
+            build_color_temperature_command_payload(50, 0x44),
+            vec![
+                ZCL_CLUSTER_COMMAND_FRAME_CONTROL,
+                0x44,
+                ZCL_COLOR_CONTROL_COMMAND_MOVE_TO_COLOR_TEMPERATURE,
+                0x47,
+                0x01,
+                0x00,
+                0x00,
+            ]
+        );
+    }
 }

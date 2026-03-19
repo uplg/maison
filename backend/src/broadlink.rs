@@ -145,12 +145,23 @@ impl BroadlinkManager {
         }
 
         let local_ip = parse_optional_ipv4(local_ip.as_deref())?;
-        let devices = tokio::task::spawn_blocking(move || {
+        let discover_result = tokio::task::spawn_blocking(move || {
             Device::list(local_ip)
                 .map_err(AppError::service_unavailable)
                 .map(|devices| devices.into_iter().map(map_discovered_device).collect::<Vec<_>>())
         })
-        .await??;
+        .await?;
+
+        let devices = match discover_result {
+            Ok(devices) => devices,
+            Err(error) if is_address_in_use_discovery_error(&error) => {
+                if let Some(cached) = self.discovered_devices.read().await.clone() {
+                    return Ok(cached);
+                }
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(error),
+        };
 
         *self.discovered_devices.write().await = Some(devices.clone());
 
@@ -473,6 +484,13 @@ fn map_discovered_device(device: Device) -> BroadlinkDiscoveredDevice {
         kind,
         supports_learning,
     }
+}
+
+fn is_address_in_use_discovery_error(error: &AppError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("could not send discovery message")
+        && message.contains("could not bind to any port")
+        && message.contains("address in use")
 }
 
 fn learn_ir_blocking(host: Ipv4Addr, local_ip: Option<Ipv4Addr>) -> Result<Vec<u8>, AppError> {

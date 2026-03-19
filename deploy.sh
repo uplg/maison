@@ -15,9 +15,12 @@ ZIGBEE_RAW_PROBE_BIN="${ROOT_DIR}/backend/target/${BACKEND_TARGET}/release/zigbe
 
 RUNTIME_FILES=(
   devices.json
-  device-cache.json
   users.json
   meross-devices.json
+)
+
+MUTABLE_RUNTIME_FILES=(
+  device-cache.json
   hue-lamps.json
   hue-lamps-blacklist.json
   zigbee-lamps.json
@@ -207,6 +210,12 @@ push_to_pi() {
     if [ -f "${ROOT_DIR}/${relative_path}" ]; then
       log "Pushing ${relative_path}"
       rsync_pi -avz "${ROOT_DIR}/${relative_path}" "${PI_HOST}:${PI_APP_DIR}/"
+    fi
+  done
+
+  for relative_path in "${MUTABLE_RUNTIME_FILES[@]}"; do
+    if [ -f "${ROOT_DIR}/${relative_path}" ]; then
+      warn "Skipping push of mutable runtime file ${relative_path}; keeping remote state"
     fi
   done
 
