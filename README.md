@@ -223,5 +223,4 @@ make stop
 
 ### Planned
 
-- Unify code, everything is a device, no more "specific" types everything derived from base "object".
 - Matter bridge (but will not handle cats-related devices such as litter as it's not yet in the specification.)
