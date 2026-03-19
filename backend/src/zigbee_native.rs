@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration as StdDuration};
+use std::{collections::HashMap, sync::Arc, time::Duration as StdDuration};
 
 use ashv2::{Actor as AshActor, BaudRate, FlowControl, Payload, open as open_ash_serial};
 use ezsp::{
@@ -320,7 +320,8 @@ struct EzspContext {
     uart: EzspUart,
     callbacks_rx: mpsc::Receiver<Callback>,
     joined_devices: Vec<DiscoveredDevice>,
-    next_zdo_sequence: u8,
+    next_global_sequence: u8,
+    next_device_sequence: HashMap<u16, u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -467,15 +468,16 @@ async fn run_native_driver(
                             }
                             NativeZigbeeEvent::DeviceJoined { node_id, eui64 } => {
                                 set_status(&status, true, Some(format!("Native Zigbee device joined: {eui64} ({node_id:#06x})")), None).await;
+                                sync_status_devices(&status, &context.joined_devices).await;
                             }
                             NativeZigbeeEvent::DeviceAnnounced { node_id, eui64 } => {
                                 set_status(&status, true, Some(format!("Native Zigbee device announced: {eui64} ({node_id:#06x})")), None).await;
+                                sync_status_devices(&status, &context.joined_devices).await;
                             }
                             NativeZigbeeEvent::IncomingMessage { node_id, cluster_id, payload } => {
                                 debug!(node_id, cluster_id, payload = %hex_bytes(&payload), "native zigbee incoming message");
                             }
                         }
-                        sync_status_devices(&status, &context.joined_devices).await;
                     }
                 }
 
@@ -555,7 +557,8 @@ async fn try_open_ezsp_context(
         uart,
         callbacks_rx: callback_rx,
         joined_devices: Vec::new(),
-        next_zdo_sequence: 1,
+        next_global_sequence: 1,
+        next_device_sequence: HashMap::new(),
     })
 }
 
@@ -853,20 +856,22 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
             }
             for target in targets {
                 info!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, endpoint = ?target.endpoint, "probing known Zigbee device");
-                match tokio::time::timeout(
-                    STARTUP_DISCOVERY_TIMEOUT,
-                    request_active_endpoints(context, target.node_id),
-                )
-                .await
-                {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => {
-                        warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, error = %error, "native zigbee active endpoint probe failed");
-                        continue;
-                    }
-                    Err(_) => {
-                        warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, timeout_ms = STARTUP_DISCOVERY_TIMEOUT.as_millis(), "native zigbee active endpoint probe timed out");
-                        continue;
+                if should_probe_active_endpoints(&target) {
+                    match tokio::time::timeout(
+                        STARTUP_DISCOVERY_TIMEOUT,
+                        request_active_endpoints(context, target.node_id),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, error = %error, "native zigbee active endpoint probe failed");
+                            continue;
+                        }
+                        Err(_) => {
+                            warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, timeout_ms = STARTUP_DISCOVERY_TIMEOUT.as_millis(), "native zigbee active endpoint probe timed out");
+                            continue;
+                        }
                     }
                 }
                 if target.endpoint.is_some() {
@@ -915,7 +920,7 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 0,
                 0,
             );
-            let sequence = next_zdo_sequence(context);
+            let sequence = next_device_sequence(context, target.node_id);
             let zcl_payload = build_on_off_command_payload(enabled, sequence);
 
             context
@@ -923,7 +928,7 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 .send_unicast(
                     Destination::Direct(NodeId::from(target.node_id)),
                     aps_frame,
-                    sequence,
+                    0,
                     zcl_payload.into_iter().collect(),
                 )
                 .await
@@ -950,7 +955,7 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 .ok_or_else(|| AppError::service_unavailable(format!(
                     "Lamp {lamp_id} has no discovered endpoint yet; run discovery first"
                 )))?;
-            let sequence = next_zdo_sequence(context);
+            let sequence = next_device_sequence(context, target.node_id);
             let zcl_payload = build_brightness_command_payload(brightness, sequence);
             let aps_frame = EzspApsFrame::new(
                 HOME_AUTOMATION_PROFILE_ID,
@@ -967,7 +972,7 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 .send_unicast(
                     Destination::Direct(NodeId::from(target.node_id)),
                     aps_frame,
-                    sequence,
+                    0,
                     zcl_payload.into_iter().collect(),
                 )
                 .await
@@ -995,7 +1000,7 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 .ok_or_else(|| AppError::service_unavailable(format!(
                     "Lamp {lamp_id} has no discovered endpoint yet; run discovery first"
                 )))?;
-            let sequence = next_zdo_sequence(context);
+            let sequence = next_device_sequence(context, target.node_id);
             let zcl_payload = build_color_temperature_command_payload(temperature, sequence);
             let aps_frame = EzspApsFrame::new(
                 HOME_AUTOMATION_PROFILE_ID,
@@ -1012,7 +1017,7 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 .send_unicast(
                     Destination::Direct(NodeId::from(target.node_id)),
                     aps_frame,
-                    sequence,
+                    0,
                     zcl_payload.into_iter().collect(),
                 )
                 .await
@@ -1074,7 +1079,7 @@ async fn send_read_attributes(
     cluster_id: u16,
     attributes: &[u16],
 ) -> Result<(), AppError> {
-    let sequence = next_zdo_sequence(context);
+    let sequence = next_device_sequence(context, node_id);
     let mut payload = vec![ZCL_GLOBAL_FRAME_CONTROL, sequence, ZCL_READ_ATTRIBUTES_COMMAND_ID];
     for attribute in attributes {
         payload.push((attribute & 0xff) as u8);
@@ -1095,7 +1100,7 @@ async fn send_read_attributes(
         .send_unicast(
             Destination::Direct(NodeId::from(node_id)),
             aps_frame,
-            sequence,
+            0,
             payload.into_iter().collect(),
         )
         .await
@@ -1261,7 +1266,7 @@ async fn retry_pending_interviews(context: &mut EzspContext) {
 }
 
 async fn request_active_endpoints(context: &mut EzspContext, node_id: u16) -> Result<(), AppError> {
-    let sequence = next_zdo_sequence(context);
+    let sequence = next_device_sequence(context, node_id);
     let payload = vec![sequence, (node_id & 0xff) as u8, (node_id >> 8) as u8];
     let aps_frame = EzspApsFrame::new(
         ZDO_PROFILE_ID,
@@ -1278,7 +1283,7 @@ async fn request_active_endpoints(context: &mut EzspContext, node_id: u16) -> Re
         .send_unicast(
             Destination::Direct(NodeId::from(node_id)),
             aps_frame,
-            sequence,
+            0,
             payload.into_iter().collect(),
         )
         .await
@@ -1291,7 +1296,7 @@ async fn request_simple_descriptor(
     node_id: u16,
     endpoint: u8,
 ) -> Result<(), AppError> {
-    let sequence = next_zdo_sequence(context);
+    let sequence = next_device_sequence(context, node_id);
     let payload = vec![sequence, (node_id & 0xff) as u8, (node_id >> 8) as u8, endpoint];
     let aps_frame = EzspApsFrame::new(
         ZDO_PROFILE_ID,
@@ -1308,7 +1313,7 @@ async fn request_simple_descriptor(
         .send_unicast(
             Destination::Direct(NodeId::from(node_id)),
             aps_frame,
-            sequence,
+            0,
             payload.into_iter().collect(),
         )
         .await
@@ -1316,10 +1321,31 @@ async fn request_simple_descriptor(
         .map_err(map_ezsp_error("send Simple_Desc_req"))
 }
 
-fn next_zdo_sequence(context: &mut EzspContext) -> u8 {
-    let current = context.next_zdo_sequence;
-    context.next_zdo_sequence = context.next_zdo_sequence.wrapping_add(1);
-    current
+fn next_device_sequence(context: &mut EzspContext, node_id: u16) -> u8 {
+    next_sequence_for_device(
+        &mut context.next_device_sequence,
+        &mut context.next_global_sequence,
+        node_id,
+    )
+}
+
+fn next_sequence_for_device(
+    per_device: &mut HashMap<u16, u8>,
+    next_global: &mut u8,
+    node_id: u16,
+) -> u8 {
+    let current = per_device.entry(node_id).or_insert_with(|| {
+        let value = *next_global;
+        *next_global = next_global.wrapping_add(1);
+        value
+    });
+    let sequence = *current;
+    *current = current.wrapping_add(1);
+    sequence
+}
+
+fn should_probe_active_endpoints(target: &DiscoveredDevice) -> bool {
+    target.endpoint.is_none() || target.input_clusters.is_empty()
 }
 
 async fn handle_incoming_cluster(
@@ -1802,8 +1828,10 @@ mod tests {
         ZCL_CLUSTER_COMMAND_FRAME_CONTROL, ZCL_COLOR_CONTROL_COMMAND_MOVE_TO_COLOR_TEMPERATURE,
         ZCL_LEVEL_CONTROL_COMMAND_MOVE_TO_LEVEL, ZCL_ON_OFF_COMMAND_OFF, ZCL_ON_OFF_COMMAND_ON,
         build_brightness_command_payload, build_color_temperature_command_payload,
-        build_on_off_command_payload, brightness_percent_to_level, temperature_percent_to_mireds,
+        build_on_off_command_payload, brightness_percent_to_level, next_sequence_for_device,
+        should_probe_active_endpoints, temperature_percent_to_mireds,
     };
+    use std::collections::HashMap;
 
     #[test]
     fn on_off_payload_uses_cluster_command_frame() {
@@ -1852,5 +1880,49 @@ mod tests {
                 0x00,
             ]
         );
+    }
+
+    #[test]
+    fn device_sequences_are_independent() {
+        let mut per_device = HashMap::new();
+        let mut next_global = 1;
+
+        assert_eq!(next_sequence_for_device(&mut per_device, &mut next_global, 0x8a4c), 1);
+        assert_eq!(next_sequence_for_device(&mut per_device, &mut next_global, 0x8a4c), 2);
+        assert_eq!(next_sequence_for_device(&mut per_device, &mut next_global, 0x6cce), 2);
+        assert_eq!(next_sequence_for_device(&mut per_device, &mut next_global, 0x8a4c), 3);
+        assert_eq!(next_sequence_for_device(&mut per_device, &mut next_global, 0x6cce), 3);
+    }
+
+    #[test]
+    fn startup_probe_only_runs_for_uninterviewed_devices() {
+        let base = super::DiscoveredDevice {
+            node_id: 0x8a4c,
+            eui64: "ab:1e:d2:06:01:88:17:00".to_string(),
+            endpoint: Some(11),
+            input_clusters: vec![0, 3, 4, 5, 6, 8],
+            output_clusters: vec![25],
+            supports_brightness: true,
+            supports_temperature: false,
+            is_on: true,
+            brightness: 100,
+            temperature: None,
+            interview_completed: true,
+            model: Some("LWA001".to_string()),
+            manufacturer: Some("Signify Netherlands B.V.".to_string()),
+            connected: true,
+            reachable: true,
+            interview_attempts: 0,
+        };
+
+        assert!(!should_probe_active_endpoints(&base));
+
+        let mut missing_endpoint = base.clone();
+        missing_endpoint.endpoint = None;
+        assert!(should_probe_active_endpoints(&missing_endpoint));
+
+        let mut missing_clusters = base;
+        missing_clusters.input_clusters.clear();
+        assert!(should_probe_active_endpoints(&missing_clusters));
     }
 }
