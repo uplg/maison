@@ -797,14 +797,15 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 0,
                 0,
             );
-            let zcl_payload = vec![0x01_u8, 0x01_u8, if enabled { 0x01_u8 } else { 0x00_u8 }];
+            let sequence = next_zdo_sequence(context);
+            let zcl_payload = vec![0x01_u8, sequence, if enabled { 0x01_u8 } else { 0x00_u8 }];
 
             context
                 .uart
                 .send_unicast(
                     Destination::Direct(NodeId::from(target.node_id)),
                     aps_frame,
-                    0,
+                    sequence,
                     zcl_payload.into_iter().collect(),
                 )
                 .await
@@ -815,7 +816,7 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 device.is_on = enabled;
             }
 
-            refresh_device_state(context, &target).await
+            Ok(())
         }
         NativeZigbeeCommand::SetBrightness { lamp_id, brightness } => {
             let target = find_target_device(context, &lamp_id)?;
@@ -861,7 +862,7 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 device.is_on = brightness > 0;
             }
 
-            refresh_device_state(context, &target).await
+            Ok(())
         }
         NativeZigbeeCommand::SetTemperature { lamp_id, temperature } => {
             let target = find_target_device(context, &lamp_id)?;
@@ -914,7 +915,7 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
                 device.temperature = Some(temperature.min(100));
             }
 
-            refresh_device_state(context, &target).await
+            Ok(())
         }
     }
 }

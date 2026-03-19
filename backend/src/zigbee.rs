@@ -1122,6 +1122,7 @@ impl NativeZigbeeManager {
                 enabled,
             })
             .await?;
+        tokio::time::sleep(Duration::from_millis(250)).await;
         self.sync_from_runtime().await?;
         self.current_state(lamp_id).await
     }
@@ -1137,6 +1138,7 @@ impl NativeZigbeeManager {
                 brightness,
             })
             .await?;
+        tokio::time::sleep(Duration::from_millis(250)).await;
         self.sync_from_runtime().await?;
         self.current_state(lamp_id).await
     }
@@ -1152,6 +1154,7 @@ impl NativeZigbeeManager {
                 temperature,
             })
             .await?;
+        tokio::time::sleep(Duration::from_millis(250)).await;
         self.sync_from_runtime().await?;
         self.current_state(lamp_id).await
     }
