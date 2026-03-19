@@ -24,7 +24,7 @@ use tracing::{debug, info, warn};
 use crate::{
     config::Config,
     error::AppError,
-    zigbee_native::{NativeZigbeeCommand, NativeZigbeeRuntime},
+    zigbee_native::{NativeKnownDevice, NativeZigbeeCommand, NativeZigbeeRuntime},
 };
 
 const MQTT_RECONNECT_DELAY: Duration = Duration::from_secs(5);
@@ -179,7 +179,7 @@ impl ZigbeeManager {
         };
 
         let blacklisted_addresses = store.load_blacklist();
-        let lamps = store
+        let lamps: HashMap<String, ZigbeeLampRuntime> = store
             .load_lamps()?
             .into_iter()
             .map(|lamp| {
@@ -955,7 +955,7 @@ impl NativeZigbeeManager {
             blacklist_path: config.zigbee_lamps_blacklist_path.clone(),
         };
         let blacklisted_addresses = store.load_blacklist();
-        let lamps = store
+        let lamps: HashMap<String, ZigbeeLampRuntime> = store
             .load_lamps()?
             .into_iter()
             .filter(|lamp| !blacklisted_addresses.contains(&lamp.ieee_address))
@@ -993,7 +993,24 @@ impl NativeZigbeeManager {
             }
         });
 
-        let runtime = NativeZigbeeRuntime::spawn(adapter, serial_port);
+        let known_devices = lamps
+            .values()
+            .filter_map(|lamp| {
+                Some(NativeKnownDevice {
+                    node_id: lamp.config.node_id?,
+                    eui64: lamp.config.ieee_address.clone(),
+                    endpoint: lamp.config.endpoint,
+                    input_clusters: lamp.config.input_clusters.clone(),
+                    output_clusters: lamp.config.output_clusters.clone(),
+                    model: lamp.config.model.clone(),
+                    manufacturer: lamp.config.manufacturer.clone(),
+                    supports_brightness: lamp.config.supports_brightness,
+                    supports_temperature: lamp.config.supports_temperature,
+                })
+            })
+            .collect();
+
+        let runtime = NativeZigbeeRuntime::spawn(adapter, serial_port, known_devices);
 
         Ok(Self {
             inner: Arc::new(NativeZigbeeManagerInner {
