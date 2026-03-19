@@ -657,7 +657,12 @@ impl ZigbeeManager {
                 interview_completed: discovered.interview_completed,
             });
 
-            runtime.config.name = discovered.name;
+            let previous_default_name = default_name_from_friendly_name(&runtime.config.friendly_name);
+            let has_custom_name = !runtime.config.name.trim().is_empty() && runtime.config.name != previous_default_name;
+
+            if !has_custom_name {
+                runtime.config.name = discovered.name;
+            }
             runtime.config.friendly_name = discovered.friendly_name;
             runtime.config.ieee_address = discovered.ieee_address;
             runtime.config.model = discovered.model;
@@ -1167,6 +1172,10 @@ fn normalize_id(value: &str) -> String {
     }
 }
 
+fn default_name_from_friendly_name(friendly_name: &str) -> String {
+    friendly_name.replace('_', " ")
+}
+
 fn value_as_u16(value: &Value) -> Option<u16> {
     value.as_u64().map(|number| number.min(u16::MAX as u64) as u16)
 }
@@ -1218,4 +1227,28 @@ fn client_error_to_string(error: ClientError) -> String {
 
 fn connection_error_to_string(error: ConnectionError) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_name_from_friendly_name;
+
+    #[test]
+    fn derived_default_name_replaces_underscores() {
+        assert_eq!(default_name_from_friendly_name("0x00158d0001_abcd"), "0x00158d0001 abcd");
+    }
+
+    #[test]
+    fn custom_name_detection_distinguishes_default_and_custom_values() {
+        let previous_default_name = default_name_from_friendly_name("kitchen_light");
+
+        let default_name = "kitchen light";
+        let custom_name = "Lampe cuisine";
+
+        let default_is_custom = !default_name.trim().is_empty() && default_name != previous_default_name;
+        let custom_is_custom = !custom_name.trim().is_empty() && custom_name != previous_default_name;
+
+        assert!(!default_is_custom);
+        assert!(custom_is_custom);
+    }
 }

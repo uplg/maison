@@ -2,6 +2,10 @@ pub mod auth;
 pub mod broadlink;
 pub mod config;
 pub mod error;
+#[cfg(feature = "bluetooth")]
+pub mod hue;
+#[cfg(not(feature = "bluetooth"))]
+#[path = "hue_stub.rs"]
 pub mod hue;
 pub mod meross;
 pub mod mitsubishi_ir;
@@ -20,6 +24,7 @@ use broadlink::BroadlinkManager;
 use config::Config;
 use error::AppError;
 use hue::HueManager;
+use tower_http::services::{ServeDir, ServeFile};
 use routes::auth::{load_users, SharedUsers};
 use meross::MerossManager;
 use tuya::TuyaManager;
@@ -95,7 +100,7 @@ pub fn build_app_parts_from_config(config: Arc<Config>) -> Result<(Router, AppSt
 
 pub fn build_app(state: AppState) -> Router {
     let api_router = Router::<AppState>::new()
-        .merge(routes::root::router())
+        .merge(routes::root::api_router())
         .nest("/auth", routes::auth::router())
         .nest("/broadlink", routes::broadlink::router())
         .nest("/devices", routes::devices::router())
@@ -104,11 +109,20 @@ pub fn build_app(state: AppState) -> Router {
         .nest("/tempo", routes::tempo::router())
         .nest("/zigbee", routes::zigbee::router());
 
-    Router::<AppState>::new()
-        .merge(routes::root::router())
-        .nest("/api", api_router)
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
+    let app = Router::<AppState>::new()
+        .merge(routes::root::health_router())
+        .nest("/api", api_router);
+
+    let app = if state.config.frontend_dist_dir.join("index.html").is_file() {
+        app.fallback_service(
+            ServeDir::new(state.config.frontend_dist_dir.clone())
+                .not_found_service(ServeFile::new(state.config.frontend_dist_dir.join("index.html"))),
+        )
+    } else {
+        app.merge(routes::root::router())
+    };
+
+    app.layer(TraceLayer::new_for_http()).with_state(state)
 }
 
 impl AppState {

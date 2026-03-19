@@ -1,6 +1,7 @@
 [Unit]
 Description=zigbee2mqtt
-After=network.target
+After=network-online.target mosquitto.service
+Wants=network-online.target mosquitto.service
 
 [Service]
 Environment=NODE_ENV=production

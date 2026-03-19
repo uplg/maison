@@ -1,10 +1,12 @@
-.PHONY: help backend backend-start backend-stop frontend frontend-build compose-up compose-down tunnel-up tunnel-down zigbee2mqtt zigbee2mqtt-start zigbee2mqtt-stop start stop status
+.PHONY: help backend backend-release backend-build-release backend-build-pi backend-build-pi-cross backend-start backend-start-release backend-stop frontend frontend-build compose-up compose-down tunnel-up tunnel-down zigbee2mqtt zigbee2mqtt-start zigbee2mqtt-stop start stop status
 
 LOG_DIR := logs
 BACKEND_LOG := $(LOG_DIR)/backend.log
 BACKEND_PID := .backend.pid
 ZIGBEE2MQTT_LOG := $(LOG_DIR)/zigbee2mqtt.log
 ZIGBEE2MQTT_PID := .zigbee2mqtt.pid
+BACKEND_RELEASE_BIN := backend/target/release/cat-monitor-rust-backend
+BACKEND_BUILD_FLAGS ?=
 API_PORT ?= $(shell grep -E '^(API_PORT|PORT)=' .env 2>/dev/null | tail -n1 | cut -d'=' -f2 || echo 3033)
 PUBLIC_HOSTNAME ?= $(shell grep -E '^CLOUDFLARE_PUBLIC_HOSTNAME=' .env 2>/dev/null | cut -d'=' -f2)
 ZIGBEE_ENABLED ?= $(shell grep -E '^ZIGBEE_ENABLED=' .env 2>/dev/null | cut -d'=' -f2 || echo false)
@@ -14,7 +16,12 @@ ZIGBEE2MQTT_DIR ?= $(shell grep -E '^ZIGBEE2MQTT_DIR=' .env 2>/dev/null | cut -d
 help:
 	@printf "Targets:\n"
 	@printf "  make backend         Run the Rust backend on the host in foreground\n"
+	@printf "  make backend-release Run the Rust release binary in foreground\n"
+	@printf "  make backend-build-release Build the Rust release binary\n"
+	@printf "  make backend-build-pi Build the Pi-oriented release binary (no BLE)\n"
+	@printf "  make backend-build-pi-cross Cross-build the Pi-oriented binary with zigbuild\n"
 	@printf "  make backend-start   Start the Rust backend on the host in background\n"
+	@printf "  make backend-start-release Start the Rust release binary in background\n"
 	@printf "  make backend-stop    Stop the host backend\n"
 	@printf "  make frontend        Run the frontend dev server\n"
 	@printf "  make frontend-build  Build the frontend\n"
@@ -32,6 +39,23 @@ help:
 backend:
 	cargo run --manifest-path backend/Cargo.toml
 
+backend-release:
+	@if [ ! -x $(BACKEND_RELEASE_BIN) ]; then \
+		printf "Release binary not found: %s\n" "$(BACKEND_RELEASE_BIN)"; \
+		printf '%s\n' 'Build it first with make backend-build-release'; \
+		exit 1; \
+	fi
+	$(BACKEND_RELEASE_BIN)
+
+backend-build-release:
+	cargo build --release --manifest-path backend/Cargo.toml $(BACKEND_BUILD_FLAGS)
+
+backend-build-pi:
+	cargo build --release --manifest-path backend/Cargo.toml --no-default-features
+
+backend-build-pi-cross:
+	bash scripts/build-rpi1-backend.sh
+
 backend-start:
 	@mkdir -p $(LOG_DIR)
 	@if [ -f $(BACKEND_PID) ] && kill -0 $$(cat $(BACKEND_PID)) 2>/dev/null; then \
@@ -39,6 +63,21 @@ backend-start:
 	else \
 		nohup cargo run --manifest-path backend/Cargo.toml > $(BACKEND_LOG) 2>&1 & echo $$! > $(BACKEND_PID); \
 		printf "Backend started on host (PID %s)\n" "$$(cat $(BACKEND_PID))"; \
+		printf "Backend log: %s\n" "$(BACKEND_LOG)"; \
+	fi
+
+backend-start-release:
+	@mkdir -p $(LOG_DIR)
+	@if [ ! -x $(BACKEND_RELEASE_BIN) ]; then \
+		printf "Release binary not found: %s\n" "$(BACKEND_RELEASE_BIN)"; \
+		printf '%s\n' 'Build it first with make backend-build-release'; \
+		exit 1; \
+	fi
+	@if [ -f $(BACKEND_PID) ] && kill -0 $$(cat $(BACKEND_PID)) 2>/dev/null; then \
+		printf "Backend already running (PID %s)\n" "$$(cat $(BACKEND_PID))"; \
+	else \
+		nohup $(BACKEND_RELEASE_BIN) > $(BACKEND_LOG) 2>&1 & echo $$! > $(BACKEND_PID); \
+		printf "Backend release started on host (PID %s)\n" "$$(cat $(BACKEND_PID))"; \
 		printf "Backend log: %s\n" "$(BACKEND_LOG)"; \
 	fi
 
@@ -51,6 +90,7 @@ backend-stop:
 	fi
 	@rm -f $(BACKEND_PID)
 	@pkill -f "cargo run --manifest-path backend/Cargo.toml" 2>/dev/null || true
+	@pkill -f "$(BACKEND_RELEASE_BIN)" 2>/dev/null || true
 
 frontend:
 	bun --cwd frontend run dev

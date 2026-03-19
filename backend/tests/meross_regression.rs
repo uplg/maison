@@ -160,6 +160,7 @@ fn test_config() -> Config {
         host: "127.0.0.1".to_string(),
         port: 0,
         jwt_secret: env::var("JWT_SECRET").unwrap_or_else(|_| "super-secret-cat-key-change-me".to_string()),
+        frontend_dist_dir: source_root.join("frontend").join("dist"),
         auth_cookie_name: "maison_session".to_string(),
         auth_cookie_secure: false,
         auth_rate_limit_attempts: 10,
@@ -172,6 +173,15 @@ fn test_config() -> Config {
         broadlink_codes_path: source_root.join("broadlink-codes.json"),
         hue_lamps_path: source_root.join("hue-lamps.json"),
         hue_blacklist_path: source_root.join("hue-lamps-blacklist.json"),
+        zigbee_lamps_path: source_root.join("zigbee-lamps.json"),
+        zigbee_lamps_blacklist_path: source_root.join("zigbee-lamps-blacklist.json"),
+        mqtt_host: "127.0.0.1".to_string(),
+        mqtt_port: 1883,
+        mqtt_username: None,
+        mqtt_password: None,
+        mqtt_client_id: "cat-monitor-test".to_string(),
+        z2m_base_topic: "zigbee2mqtt".to_string(),
+        zigbee_permit_join_seconds: 120,
         source_root,
     }
 }

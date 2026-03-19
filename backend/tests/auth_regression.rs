@@ -93,6 +93,7 @@ fn test_config() -> Config {
         host: "127.0.0.1".to_string(),
         port: 0,
         jwt_secret: env::var("JWT_SECRET").unwrap_or_else(|_| "super-secret-cat-key-change-me".to_string()),
+        frontend_dist_dir: source_root.join("frontend").join("dist"),
         auth_cookie_name: "maison_session".to_string(),
         auth_cookie_secure: false,
         auth_rate_limit_attempts: 10,

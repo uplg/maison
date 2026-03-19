@@ -5,6 +5,7 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub jwt_secret: String,
+    pub frontend_dist_dir: PathBuf,
     pub auth_cookie_name: String,
     pub auth_cookie_secure: bool,
     pub auth_rate_limit_attempts: u32,
@@ -38,6 +39,10 @@ impl Config {
         let users_path = env::var("USERS_JSON_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| source_root.join("users.json"));
+
+        let frontend_dist_dir = env::var("FRONTEND_DIST_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| source_root.join("frontend").join("dist"));
 
         let meross_devices_path = env::var("MEROSS_DEVICES_JSON_PATH")
             .map(PathBuf::from)
@@ -143,6 +148,7 @@ impl Config {
             host,
             port,
             jwt_secret,
+            frontend_dist_dir,
             auth_cookie_name,
             auth_cookie_secure,
             auth_rate_limit_attempts,

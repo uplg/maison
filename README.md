@@ -39,7 +39,24 @@ Tempo recalibration workflow is documented in `docs/tempo-calibration.md`.
 
 - `bun` for the frontend
 - Rust and `cargo` for the backend
-- Docker for the frontend container, Mosquitto, and the optional Cloudflare tunnel
+- Docker only for the optional containerized frontend, Mosquitto, and the optional Cloudflare tunnel
+
+## Raspberry Pi 1
+
+For Raspberry Pi 1 deployments, the intended setup is fully host-native:
+
+- run Mosquitto directly on the Pi
+- run Zigbee2MQTT directly on the Pi
+- build the frontend once, then let the Rust backend serve `frontend/dist`
+- run a Rust release binary instead of `cargo run`
+- compile without Bluetooth support: `cargo build --release --manifest-path backend/Cargo.toml --no-default-features`
+- set `DISABLE_BLUETOOTH=true`
+- set `AUTH_COOKIE_SECURE=false` if the Pi is exposed only over plain HTTP on the LAN
+
+Deployment notes and host-native service files are in `docs/raspberry-pi-1.md`, `deploy/systemd/cat-monitor.service`, `deploy/systemd/cloudflared-cat-monitor.service`, `zigbee2mqtt/zigbee2mqtt.service`, and `deploy/mosquitto/cat-monitor.conf`.
+
+There is also a one-shot deployment helper for the Pi: `deploy.sh`.
+It supports `all`, `build`, `push`, `upgrade`, `start`, `status`, and `logs`.
 
 ## Environment
 
@@ -51,6 +68,7 @@ Main settings:
 
 - `PORT` / `API_PORT`: Rust backend port, default `3033`
 - `JWT_SECRET`: auth signing secret
+- `FRONTEND_DIST_DIR`: built frontend directory served directly by the backend when `index.html` exists
 - `DISABLE_BLUETOOTH`: set `true` to disable Hue BLE support
 - `MQTT_HOST` / `MQTT_PORT`: local MQTT broker used by Zigbee2MQTT and the backend
 - `ZIGBEE_ENABLED`: set `true` to start Zigbee2MQTT from `make start`
@@ -112,7 +130,8 @@ The frontend proxies `/api` to `http://localhost:3033` by default.
 
 Zigbee2MQTT now runs directly on the host, not in Docker.
 
-- macOS and Linux both use the same app structure: host backend + host Zigbee2MQTT + Docker frontend/Mosquitto
+- Raspberry Pi 1 should use the fully host-native layout: host backend + host-served frontend + host Mosquitto + host Zigbee2MQTT
+- Docker is only an optional convenience for stronger machines during development
 - the Sonoff Dongle Lite MG21 should use `adapter: ember`
 - repository config lives in `zigbee2mqtt/configuration.yaml`
 - full setup instructions are in `docs/zigbee2mqtt-host-setup.md`
@@ -129,6 +148,10 @@ make zigbee2mqtt-stop
 
 Docker is kept only for the frontend, Mosquitto, and the optional Cloudflare tunnel.
 The Rust backend always runs directly on the host.
+
+On low-resource targets like Raspberry Pi 1, Docker should be treated as optional. The backend can now serve the built frontend directly from `frontend/dist`.
+
+For Raspberry Pi 1, the recommended production path is no Docker at all.
 
 Start frontend + Mosquitto:
 
@@ -152,6 +175,8 @@ If you want a stable public URL, create a named Cloudflare Tunnel in the Cloudfl
 attach your chosen subdomain to it, then put the tunnel token in `CLOUDFLARE_TUNNEL_TOKEN`.
 Set the same hostname in `CLOUDFLARE_PUBLIC_HOSTNAME` so `make start` prints the final URL.
 
+For Raspberry Pi 1, prefer the host-native systemd service in `deploy/systemd/cloudflared-cat-monitor.service` instead of Docker.
+
 ## One-command lifecycle
 
 Start everything:
@@ -168,6 +193,8 @@ This starts:
 - the Mosquitto container
 - optionally the Cloudflare tunnel container
 
+For Raspberry Pi 1, prefer systemd-managed host services instead of `make start`.
+
 Stop everything:
 
 ```bash
@@ -178,6 +205,14 @@ make stop
 
 - Frontend build: `bun --cwd frontend run build`
 - Backend tests: `cargo test --manifest-path backend/Cargo.toml`
+- Minimal Pi-oriented backend check: `cargo check --manifest-path backend/Cargo.toml --no-default-features`
+
+## Cross-compilation
+
+- local dev stays unchanged; the Pi flow is opt-in
+- native Pi-oriented build: `make backend-build-pi`
+- cross-build helper: `make backend-build-pi-cross`
+- full instructions are in `docs/raspberry-pi-1.md`
 
 ### Planned
 

@@ -18,10 +18,18 @@ struct HealthResponse {
     service: &'static str,
 }
 
-pub fn router() -> Router<AppState> {
+pub fn api_router() -> Router<AppState> {
     Router::new()
         .route("/", get(root_handler))
         .route("/health", get(health_handler))
+}
+
+pub fn health_router() -> Router<AppState> {
+    Router::new().route("/health", get(health_handler))
+}
+
+pub fn router() -> Router<AppState> {
+    api_router()
 }
 
 async fn root_handler() -> Json<RootResponse> {
@@ -30,8 +38,6 @@ async fn root_handler() -> Json<RootResponse> {
         version: "0.1.0",
         description: "Maison backend",
         endpoints: vec![
-            "GET /",
-            "GET /health",
             "GET /api/",
             "GET /api/health",
             "POST /api/auth/login",
