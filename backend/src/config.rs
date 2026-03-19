@@ -176,8 +176,26 @@ impl Config {
 }
 
 fn default_source_root() -> PathBuf {
+    if let Ok(current_dir) = env::current_dir() {
+        if looks_like_source_root(&current_dir) {
+            return current_dir;
+        }
+    }
+
+    if let Ok(current_exe) = env::current_exe() {
+        for ancestor in current_exe.ancestors() {
+            if looks_like_source_root(ancestor) {
+                return ancestor.to_path_buf();
+            }
+        }
+    }
+
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("backend has parent")
         .to_path_buf()
+}
+
+fn looks_like_source_root(path: &std::path::Path) -> bool {
+    path.join("users.json").is_file() || path.join("frontend").is_dir()
 }

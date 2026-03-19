@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TARGET="${TARGET:-arm-unknown-linux-gnueabihf}"
+TARGET="${TARGET:-arm-unknown-linux-musleabihf}"
 TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}"
 MANIFEST="backend/Cargo.toml"
 PACKAGE_NAME="cat-monitor-rust-backend"

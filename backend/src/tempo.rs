@@ -401,6 +401,7 @@ impl TempoService {
         let cache_dir = source_root.join("cache").join("tempo");
         let calibration_path = cache_dir.join("calibration_params.json");
         let forecast_cache_path = cache_dir.join("temp_forecast.json");
+        std::fs::create_dir_all(&cache_dir)?;
         let calibration = Arc::new(load_calibration(&calibration_path)?);
 
         Ok(Self {
@@ -1031,6 +1032,9 @@ fn load_calibration(path: &PathBuf) -> Result<TempoCalibration, AppError> {
 }
 
 fn save_calibration(path: &Path, params: &TempoCalibrationParams) -> Result<(), AppError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let serialized = serde_json::to_string_pretty(params)?;
     std::fs::write(path, serialized)?;
     Ok(())
@@ -1519,6 +1523,7 @@ async fn load_temperature_history(
         )));
     }
 
+    std::fs::create_dir_all(cache_dir)?;
     std::fs::write(&path, serde_json::to_string_pretty(&TemperatureHistoryCache { values: values.clone() })?)?;
     Ok(values)
 }

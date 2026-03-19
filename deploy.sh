@@ -4,12 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PI_HOST="${PI_HOST:-}"
 PI_APP_DIR="${PI_APP_DIR:-/opt/cat-monitor}"
-PI_Z2M_DIR="${PI_Z2M_DIR:-/opt/zigbee2mqtt}"
-PI_Z2M_REPO="${PI_Z2M_REPO:-https://github.com/Koenkk/zigbee2mqtt.git}"
 PI_SERVICE_USER="${PI_SERVICE_USER:-catmonitor}"
 PI_SERVICE_GROUP="${PI_SERVICE_GROUP:-${PI_SERVICE_USER}}"
 PI_ENV_FILE="${PI_ENV_FILE:-${ROOT_DIR}/.env}"
-BACKEND_TARGET="${BACKEND_TARGET:-arm-unknown-linux-gnueabihf}"
+BACKEND_TARGET="${BACKEND_TARGET:-arm-unknown-linux-musleabihf}"
 BACKEND_BIN="${ROOT_DIR}/backend/target/${BACKEND_TARGET}/release/cat-monitor-rust-backend"
 
 RUNTIME_FILES=(
@@ -26,31 +24,29 @@ RUNTIME_FILES=(
 usage() {
   cat <<'EOF'
 Usage:
-  PI_HOST=pi@raspberrypi ./deploy.sh [all|build|push|upgrade|start|logs|status]
+  PI_HOST=pi@raspberrypi ./deploy.sh [all|build|push|upgrade|start|stop|logs|status]
 
 Commands:
   all      Build locally, push to the Pi, upgrade host services, restart everything
   build    Build the frontend and cross-build the backend only
   push     Push artifacts and configs to the Pi only
-  upgrade  Upgrade/install host-native pieces on the Pi only
-  start    Install/reload systemd units and restart services on the Pi only
+  upgrade  Install or upgrade host-native dependencies on the Pi
+  start    Install service definitions and restart the stack on the Pi
+  stop     Stop the running stack on the Pi
   logs     Follow logs for one service or the full stack
   status   Show service status, dependency hints, and final URLs
 
 Environment:
-  PI_HOST          SSH target, required for push/upgrade/start/all
+  PI_HOST          SSH target, required for push/upgrade/start/all/logs/status
   PI_APP_DIR       Remote app directory, default /opt/cat-monitor
-  PI_Z2M_DIR       Remote Zigbee2MQTT directory, default /opt/zigbee2mqtt
-  PI_Z2M_REPO      Zigbee2MQTT git URL
   PI_SERVICE_USER  Service user on the Pi, default catmonitor
   PI_SERVICE_GROUP Service group on the Pi, default catmonitor
   PI_ENV_FILE      Local env file to deploy, default ./.env
-  BACKEND_TARGET   Rust target triple, default arm-unknown-linux-gnueabihf
+  BACKEND_TARGET   Rust target triple, default arm-unknown-linux-musleabihf
 
 Examples:
   PI_HOST=pi@192.168.1.50 ./deploy.sh all
   PI_HOST=pi@192.168.1.50 ./deploy.sh push
-  PI_HOST=pi@192.168.1.50 PI_APP_DIR=/srv/cat-monitor ./deploy.sh start
   PI_HOST=pi@192.168.1.50 ./deploy.sh logs backend
   PI_HOST=pi@192.168.1.50 ./deploy.sh status
 EOF
@@ -80,48 +76,51 @@ ssh_pi() {
   ssh "${PI_HOST}" "$@"
 }
 
+build_local() {
+  run_local bun install --cwd "${ROOT_DIR}/frontend" --frozen-lockfile
+  run_local bun run --cwd "${ROOT_DIR}/frontend" build
+  run_local env TARGET="${BACKEND_TARGET}" bash "${ROOT_DIR}/scripts/build-rpi1-backend.sh"
+}
+
 prepare_remote_push() {
   require_host
   log "Preparing remote host for file sync"
-  ssh "${PI_HOST}" bash -s -- "${PI_APP_DIR}" "${PI_Z2M_DIR}" "${PI_SERVICE_USER}" "${PI_SERVICE_GROUP}" <<'EOF'
-set -euo pipefail
+  ssh "${PI_HOST}" sh -s -- "${PI_APP_DIR}" "${PI_SERVICE_USER}" "${PI_SERVICE_GROUP}" <<'EOF'
+set -eu
 
 APP_DIR="$1"
-Z2M_DIR="$2"
-SERVICE_USER="$3"
-SERVICE_GROUP="$4"
+SERVICE_USER="$2"
+SERVICE_GROUP="$3"
+REMOTE_USER="$(id -un)"
+REMOTE_GROUP="$(id -gn)"
 
-sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y rsync
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+else
+  ID=unknown
+fi
 
+apk add --no-cache rsync
 if ! getent group "${SERVICE_GROUP}" >/dev/null 2>&1; then
-  sudo groupadd --system "${SERVICE_GROUP}"
+  addgroup -S "${SERVICE_GROUP}"
 fi
-
 if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
-  sudo useradd --system --gid "${SERVICE_GROUP}" --home-dir "${APP_DIR}" --create-home --shell /usr/sbin/nologin "${SERVICE_USER}"
+  adduser -S -D -H -h "${APP_DIR}" -G "${SERVICE_GROUP}" -s /sbin/nologin "${SERVICE_USER}"
 fi
 
-sudo usermod -a -G dialout "${SERVICE_USER}" || true
 
-sudo mkdir -p \
+mkdir -p \
   "${APP_DIR}/backend/target/release" \
   "${APP_DIR}/frontend/dist" \
   "${APP_DIR}/deploy/systemd" \
+  "${APP_DIR}/deploy/openrc" \
   "${APP_DIR}/deploy/mosquitto" \
-  "${APP_DIR}/zigbee2mqtt" \
   "${APP_DIR}/mosquitto/certs" \
-  "${APP_DIR}/cache" \
-  "${Z2M_DIR}"
+  "${APP_DIR}/cache"
 
-sudo chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${APP_DIR}" "${Z2M_DIR}"
+chown -R "${REMOTE_USER}:${REMOTE_GROUP}" "${APP_DIR}"
+chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${APP_DIR}/cache"
 EOF
-}
-
-build_local() {
-  run_local bun --cwd "${ROOT_DIR}/frontend" install --frozen-lockfile
-  run_local bun --cwd "${ROOT_DIR}/frontend" run build
-  run_local bash "${ROOT_DIR}/scripts/build-rpi1-backend.sh"
 }
 
 push_to_pi() {
@@ -155,9 +154,9 @@ push_to_pi() {
   log "Pushing service templates and configs"
   rsync -avz "${ROOT_DIR}/deploy/systemd/cat-monitor.service" "${PI_HOST}:${PI_APP_DIR}/deploy/systemd/"
   rsync -avz "${ROOT_DIR}/deploy/systemd/cloudflared-cat-monitor.service" "${PI_HOST}:${PI_APP_DIR}/deploy/systemd/"
+  rsync -avz "${ROOT_DIR}/deploy/openrc/cat-monitor" "${PI_HOST}:${PI_APP_DIR}/deploy/openrc/"
+  rsync -avz "${ROOT_DIR}/deploy/openrc/cloudflared-cat-monitor" "${PI_HOST}:${PI_APP_DIR}/deploy/openrc/"
   rsync -avz "${ROOT_DIR}/deploy/mosquitto/cat-monitor.conf" "${PI_HOST}:${PI_APP_DIR}/deploy/mosquitto/"
-  rsync -avz "${ROOT_DIR}/zigbee2mqtt/configuration.yaml" "${PI_HOST}:${PI_APP_DIR}/zigbee2mqtt/"
-  rsync -avz "${ROOT_DIR}/zigbee2mqtt/zigbee2mqtt.service" "${PI_HOST}:${PI_APP_DIR}/zigbee2mqtt/"
 
   if [ -d "${ROOT_DIR}/mosquitto/certs" ]; then
     log "Pushing Mosquitto certificates"
@@ -182,182 +181,256 @@ push_to_pi() {
 upgrade_pi() {
   require_host
   log "Upgrading host-native services on the Pi"
-  ssh "${PI_HOST}" bash -s -- "${PI_APP_DIR}" "${PI_Z2M_DIR}" "${PI_Z2M_REPO}" "${PI_SERVICE_USER}" "${PI_SERVICE_GROUP}" <<'EOF'
-set -euo pipefail
+  ssh "${PI_HOST}" sh -s -- "${PI_APP_DIR}" "${PI_SERVICE_USER}" "${PI_SERVICE_GROUP}" <<'EOF'
+set -eu
 
 APP_DIR="$1"
-Z2M_DIR="$2"
-Z2M_REPO="$3"
-SERVICE_USER="$4"
-SERVICE_GROUP="$5"
+SERVICE_USER="$2"
+SERVICE_GROUP="$3"
 
-sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mosquitto mosquitto-clients git curl ca-certificates rsync
-sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+mkdir -p "${APP_DIR}/cache/tempo"
 
+for mutable_path in \
+  "${APP_DIR}/cache" \
+  "${APP_DIR}/device-cache.json" \
+  "${APP_DIR}/broadlink-codes.json" \
+  "${APP_DIR}/hue-lamps.json" \
+  "${APP_DIR}/hue-lamps-blacklist.json" \
+  "${APP_DIR}/zigbee-lamps.json" \
+  "${APP_DIR}/zigbee-lamps-blacklist.json"
+do
+  if [ -e "${mutable_path}" ]; then
+    chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${mutable_path}"
+  fi
+done
+
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+else
+  ID=unknown
+fi
+
+apk update
+apk add --no-cache bash ca-certificates curl git mosquitto rsync
 if ! getent group "${SERVICE_GROUP}" >/dev/null 2>&1; then
-  sudo groupadd --system "${SERVICE_GROUP}"
+  addgroup -S "${SERVICE_GROUP}"
 fi
-
 if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
-  sudo useradd --system --gid "${SERVICE_GROUP}" --home-dir "${APP_DIR}" --create-home --shell /usr/sbin/nologin "${SERVICE_USER}"
+  adduser -S -D -H -h "${APP_DIR}" -G "${SERVICE_GROUP}" -s /sbin/nologin "${SERVICE_USER}"
 fi
 
-sudo usermod -a -G dialout "${SERVICE_USER}" || true
+mkdir -p /etc/mosquitto/conf.d /etc/mosquitto/certs/cat-monitor /var/log/mosquitto /var/log
 
-sudo mkdir -p "${Z2M_DIR}"
-sudo chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${Z2M_DIR}"
-
-if [ ! -d "${Z2M_DIR}/.git" ]; then
-  sudo -u "${SERVICE_USER}" git clone --depth 1 "${Z2M_REPO}" "${Z2M_DIR}"
-else
-  sudo -u "${SERVICE_USER}" git -C "${Z2M_DIR}" fetch --depth 1 origin
-  sudo -u "${SERVICE_USER}" git -C "${Z2M_DIR}" pull --ff-only
-fi
-
-if command -v pnpm >/dev/null 2>&1; then
-  printf '%s\n' 'Using pnpm from PATH for Zigbee2MQTT install'
-  sudo -u "${SERVICE_USER}" sh -lc 'cd "$1" && pnpm install --frozen-lockfile' sh "${Z2M_DIR}"
-elif command -v corepack >/dev/null 2>&1; then
-  printf '%s\n' 'pnpm not found; trying corepack enable for Zigbee2MQTT install'
-  sudo -u "${SERVICE_USER}" sh -lc 'corepack enable && cd "$1" && pnpm install --frozen-lockfile' sh "${Z2M_DIR}"
-else
-  printf '%s\n' 'Warning: pnpm and corepack are both missing on the Pi.' >&2
-  printf '%s\n' 'Install Node.js with pnpm support, or install pnpm globally before restarting Zigbee2MQTT.' >&2
-  printf '%s\n' 'Zigbee2MQTT code was updated, but dependencies were not installed.' >&2
-fi
-
-sudo mkdir -p "${Z2M_DIR}/data"
-if [ -f "${APP_DIR}/zigbee2mqtt/configuration.yaml" ]; then
-  sudo cp "${APP_DIR}/zigbee2mqtt/configuration.yaml" "${Z2M_DIR}/data/configuration.yaml"
-fi
-
-sudo mkdir -p /etc/mosquitto/conf.d /etc/mosquitto/certs/cat-monitor
 if [ -f "${APP_DIR}/deploy/mosquitto/cat-monitor.conf" ]; then
-  sudo cp "${APP_DIR}/deploy/mosquitto/cat-monitor.conf" /etc/mosquitto/conf.d/cat-monitor.conf
+  cp "${APP_DIR}/deploy/mosquitto/cat-monitor.conf" /etc/mosquitto/conf.d/cat-monitor.conf
 fi
 
 if [ -f "${APP_DIR}/mosquitto/certs/ca.pem" ]; then
-  sudo cp "${APP_DIR}/mosquitto/certs/ca.pem" /etc/mosquitto/certs/cat-monitor/ca.pem
+  cp "${APP_DIR}/mosquitto/certs/ca.pem" /etc/mosquitto/certs/cat-monitor/ca.pem
 fi
 if [ -f "${APP_DIR}/mosquitto/certs/server.pem" ]; then
-  sudo cp "${APP_DIR}/mosquitto/certs/server.pem" /etc/mosquitto/certs/cat-monitor/server.pem
+  cp "${APP_DIR}/mosquitto/certs/server.pem" /etc/mosquitto/certs/cat-monitor/server.pem
 fi
 if [ -f "${APP_DIR}/mosquitto/certs/server-key.pem" ]; then
-  sudo cp "${APP_DIR}/mosquitto/certs/server-key.pem" /etc/mosquitto/certs/cat-monitor/server-key.pem
-  sudo chmod 600 /etc/mosquitto/certs/cat-monitor/server-key.pem
+  cp "${APP_DIR}/mosquitto/certs/server-key.pem" /etc/mosquitto/certs/cat-monitor/server-key.pem
+  chmod 600 /etc/mosquitto/certs/cat-monitor/server-key.pem
 fi
-sudo chown -R mosquitto:mosquitto /etc/mosquitto/certs/cat-monitor || true
 
-sudo chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${APP_DIR}" "${Z2M_DIR}"
+chown -R mosquitto:mosquitto /etc/mosquitto/certs/cat-monitor /var/log/mosquitto 2>/dev/null || true
+touch /var/log/cat-monitor.log /var/log/cloudflared-cat-monitor.log
+chown "${SERVICE_USER}:${SERVICE_GROUP}" /var/log/cat-monitor.log /var/log/cloudflared-cat-monitor.log
+chmod 644 /var/log/cat-monitor.log /var/log/cloudflared-cat-monitor.log
+
+if ! command -v cloudflared >/dev/null 2>&1; then
+  printf '%s\n' 'Warning: cloudflared is not installed on the Pi.' >&2
+  if [ "${ID:-}" = alpine ]; then
+    printf '%s\n' 'Install it manually on Alpine if you want the tunnel service enabled.' >&2
+  else
+    printf '%s\n' 'Install it manually, then re-run ./deploy.sh start.' >&2
+  fi
+fi
+
+chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${APP_DIR}/cache" 2>/dev/null || true
 EOF
 }
 
 start_pi() {
   require_host
-  log "Installing service units and restarting the stack"
-  ssh "${PI_HOST}" bash -s -- "${PI_APP_DIR}" "${PI_Z2M_DIR}" "${PI_SERVICE_USER}" "${PI_SERVICE_GROUP}" <<'EOF'
-set -euo pipefail
+  log "Installing service definitions and restarting the stack"
+  ssh "${PI_HOST}" sh -s -- "${PI_APP_DIR}" "${PI_SERVICE_USER}" "${PI_SERVICE_GROUP}" <<'EOF'
+set -eu
 
 APP_DIR="$1"
-Z2M_DIR="$2"
-SERVICE_USER="$3"
-SERVICE_GROUP="$4"
+SERVICE_USER="$2"
+SERVICE_GROUP="$3"
 
-sudo sed \
-  -e "s#/opt/cat-monitor#${APP_DIR}#g" \
-  -e "s#User=catmonitor#User=${SERVICE_USER}#g" \
-  -e "s#Group=catmonitor#Group=${SERVICE_GROUP}#g" \
-  "${APP_DIR}/deploy/systemd/cat-monitor.service" | sudo tee /etc/systemd/system/cat-monitor.service >/dev/null
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+else
+  ID=unknown
+fi
 
-sudo sed \
-  -e "s#/opt/cat-monitor#${APP_DIR}#g" \
-  -e "s#User=catmonitor#User=${SERVICE_USER}#g" \
-  -e "s#Group=catmonitor#Group=${SERVICE_GROUP}#g" \
-  "${APP_DIR}/deploy/systemd/cloudflared-cat-monitor.service" | sudo tee /etc/systemd/system/cloudflared-cat-monitor.service >/dev/null
+sed \
+  -e "s#@@APP_DIR@@#${APP_DIR}#g" \
+  -e "s#@@SERVICE_USER@@#${SERVICE_USER}#g" \
+  -e "s#@@SERVICE_GROUP@@#${SERVICE_GROUP}#g" \
+  "${APP_DIR}/deploy/openrc/cat-monitor" | tee /etc/init.d/cat-monitor >/dev/null
+chmod +x /etc/init.d/cat-monitor
 
-sudo sed \
-  -e "s#/opt/zigbee2mqtt#${Z2M_DIR}#g" \
-  -e "s#User=catmonitor#User=${SERVICE_USER}#g" \
-  "${APP_DIR}/zigbee2mqtt/zigbee2mqtt.service" | sudo tee /etc/systemd/system/zigbee2mqtt.service >/dev/null
+sed \
+  -e "s#@@APP_DIR@@#${APP_DIR}#g" \
+  -e "s#@@SERVICE_USER@@#${SERVICE_USER}#g" \
+  -e "s#@@SERVICE_GROUP@@#${SERVICE_GROUP}#g" \
+  "${APP_DIR}/deploy/openrc/cloudflared-cat-monitor" | tee /etc/init.d/cloudflared-cat-monitor >/dev/null
+chmod +x /etc/init.d/cloudflared-cat-monitor
 
-sudo systemctl daemon-reload
-
-sudo systemctl enable mosquitto
-sudo systemctl enable zigbee2mqtt.service
-sudo systemctl enable cat-monitor.service
-
-sudo systemctl restart mosquitto
-sudo systemctl restart zigbee2mqtt.service
-sudo systemctl restart cat-monitor.service
+rc-update add mosquitto default >/dev/null 2>&1 || true
+rc-update add cat-monitor default >/dev/null 2>&1 || true
+rc-service mosquitto restart || rc-service mosquitto start
+rc-service cat-monitor restart || rc-service cat-monitor start
 
 if command -v cloudflared >/dev/null 2>&1 && grep -q '^CLOUDFLARE_TUNNEL_TOKEN=.' "${APP_DIR}/.env"; then
-  sudo systemctl enable cloudflared-cat-monitor.service
-  sudo systemctl restart cloudflared-cat-monitor.service
+  rc-update add cloudflared-cat-monitor default >/dev/null 2>&1 || true
+  rc-service cloudflared-cat-monitor restart || rc-service cloudflared-cat-monitor start
 else
   if ! command -v cloudflared >/dev/null 2>&1; then
     printf '%s\n' 'Skipping cloudflared service start: cloudflared is not installed on the Pi.' >&2
-    printf '%s\n' 'Install it manually, then re-run ./deploy.sh start or ./deploy.sh status.' >&2
   elif ! grep -q '^CLOUDFLARE_TUNNEL_TOKEN=.' "${APP_DIR}/.env"; then
     printf '%s\n' 'Skipping cloudflared service start: CLOUDFLARE_TUNNEL_TOKEN is missing from the remote .env.' >&2
   fi
 fi
 
-printf 'mosquitto: %s\n' "$(systemctl is-active mosquitto || true)"
-printf 'zigbee2mqtt: %s\n' "$(systemctl is-active zigbee2mqtt.service || true)"
-printf 'cat-monitor: %s\n' "$(systemctl is-active cat-monitor.service || true)"
-if systemctl list-unit-files cloudflared-cat-monitor.service >/dev/null 2>&1; then
-  printf 'cloudflared: %s\n' "$(systemctl is-active cloudflared-cat-monitor.service || true)"
+sleep 2
+
+for service in mosquitto cat-monitor cloudflared-cat-monitor; do
+  if rc-service "${service}" status >/dev/null 2>&1; then
+    printf '%s: active\n' "${service}"
+  else
+    printf '%s: inactive\n' "${service}"
+  fi
+done
+
+EOF
+}
+
+stop_pi() {
+  require_host
+  log "Stopping the stack on the Pi"
+  ssh "${PI_HOST}" sh -s <<'EOF'
+set -eu
+
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+else
+  ID=unknown
 fi
+
+for service in cloudflared-cat-monitor cat-monitor mosquitto; do
+  if [ -x "/etc/init.d/${service}" ]; then
+    rc-service "${service}" stop >/dev/null 2>&1 || true
+  fi
+done
+
+for service in mosquitto cat-monitor cloudflared-cat-monitor; do
+  if [ -x "/etc/init.d/${service}" ] && rc-service "${service}" status >/dev/null 2>&1; then
+    printf '%s: active\n' "${service}"
+  elif [ -x "/etc/init.d/${service}" ]; then
+    printf '%s: inactive\n' "${service}"
+  fi
+done
+
 EOF
 }
 
 logs_pi() {
   require_host
   local target="${1:-stack}"
+  log "Following ${target} logs on the Pi"
+  ssh "${PI_HOST}" sh -s -- "${target}" <<'EOF'
+set -eu
+TARGET="$1"
 
-  case "${target}" in
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+else
+  ID=unknown
+fi
+
+if [ "${ID:-}" = alpine ]; then
+  case "${TARGET}" in
     stack)
-      log "Following stack logs on the Pi"
-      ssh_pi "sudo journalctl -f -u mosquitto -u zigbee2mqtt.service -u cat-monitor.service -u cloudflared-cat-monitor.service"
+      touch /var/log/mosquitto/mosquitto.log /var/log/cat-monitor.log /var/log/cloudflared-cat-monitor.log
+      exec tail -f /var/log/mosquitto/mosquitto.log /var/log/cat-monitor.log /var/log/cloudflared-cat-monitor.log
       ;;
     mosquitto)
-      log "Following mosquitto logs"
-      ssh_pi "sudo journalctl -f -u mosquitto"
-      ;;
-    zigbee|zigbee2mqtt)
-      log "Following Zigbee2MQTT logs"
-      ssh_pi "sudo journalctl -f -u zigbee2mqtt.service"
+      touch /var/log/mosquitto/mosquitto.log
+      exec tail -f /var/log/mosquitto/mosquitto.log
       ;;
     backend|cat-monitor)
-      log "Following cat-monitor backend logs"
-      ssh_pi "sudo journalctl -f -u cat-monitor.service"
+      touch /var/log/cat-monitor.log
+      exec tail -f /var/log/cat-monitor.log
       ;;
     cloudflared|tunnel)
-      log "Following cloudflared logs"
-      ssh_pi "sudo journalctl -f -u cloudflared-cat-monitor.service"
+      touch /var/log/cloudflared-cat-monitor.log
+      exec tail -f /var/log/cloudflared-cat-monitor.log
       ;;
     *)
-      printf 'Unknown log target: %s\n' "${target}" >&2
-      printf '%s\n' 'Valid targets: stack, mosquitto, zigbee2mqtt, backend, cloudflared' >&2
+      printf 'Unknown log target: %s\n' "${TARGET}" >&2
+      printf '%s\n' 'Valid targets: stack, mosquitto, backend, cloudflared' >&2
       exit 1
       ;;
   esac
+else
+  case "${TARGET}" in
+    stack)
+      exec journalctl -f -u mosquitto -u cat-monitor.service -u cloudflared-cat-monitor.service
+      ;;
+    mosquitto)
+      exec journalctl -f -u mosquitto
+      ;;
+    backend|cat-monitor)
+      exec journalctl -f -u cat-monitor.service
+      ;;
+    cloudflared|tunnel)
+      exec journalctl -f -u cloudflared-cat-monitor.service
+      ;;
+    *)
+      printf 'Unknown log target: %s\n' "${TARGET}" >&2
+      printf '%s\n' 'Valid targets: stack, mosquitto, backend, cloudflared' >&2
+      exit 1
+      ;;
+  esac
+fi
+EOF
 }
 
 status_pi() {
   require_host
   log "Collecting deployment status from the Pi"
-  ssh "${PI_HOST}" bash -s -- "${PI_APP_DIR}" "${PI_Z2M_DIR}" <<'EOF'
-set -euo pipefail
+  ssh "${PI_HOST}" sh -s -- "${PI_APP_DIR}" <<'EOF'
+set -eu
 
 APP_DIR="$1"
-Z2M_DIR="$2"
 
-service_state() {
-  local unit="$1"
-  if systemctl list-unit-files "$unit" >/dev/null 2>&1; then
-    systemctl is-active "$unit" 2>/dev/null || true
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+else
+  ID=unknown
+fi
+
+service_state_openrc() {
+  if rc-service "$1" status >/dev/null 2>&1; then
+    printf 'active'
+  elif [ -x "/etc/init.d/$1" ]; then
+    printf 'inactive'
+  else
+    printf 'not-installed'
+  fi
+}
+
+service_state_systemd() {
+  if systemctl list-unit-files "$1" >/dev/null 2>&1; then
+    systemctl is-active "$1" 2>/dev/null || true
   else
     printf 'not-installed'
   fi
@@ -373,21 +446,26 @@ if [ -f "${APP_DIR}/.env" ] && grep -q '^CLOUDFLARE_TUNNEL_TOKEN=.' "${APP_DIR}/
   tunnel_token_present='yes'
 fi
 
-printf 'Services:\n'
-printf '  mosquitto: %s\n' "$(service_state mosquitto)"
-printf '  zigbee2mqtt: %s\n' "$(service_state zigbee2mqtt.service)"
-printf '  cat-monitor: %s\n' "$(service_state cat-monitor.service)"
-printf '  cloudflared: %s\n' "$(service_state cloudflared-cat-monitor.service)"
-
-printf '\nRuntime:\n'
-if command -v pnpm >/dev/null 2>&1; then
-  printf '  pnpm: installed (%s)\n' "$(pnpm --version 2>/dev/null || printf 'unknown')"
-elif command -v corepack >/dev/null 2>&1; then
-  printf '%s\n' '  pnpm: missing, but corepack is available'
+printf 'Platform:\n'
+printf '  os: %s\n' "${PRETTY_NAME:-unknown}"
+if [ "${ID:-}" = alpine ]; then
+  printf '%s\n' '  init: openrc'
 else
-  printf '%s\n' '  pnpm: missing and corepack is missing'
+  printf '%s\n' '  init: systemd'
 fi
 
+printf '\nServices:\n'
+if [ "${ID:-}" = alpine ]; then
+  printf '  mosquitto: %s\n' "$(service_state_openrc mosquitto)"
+  printf '  cat-monitor: %s\n' "$(service_state_openrc cat-monitor)"
+  printf '  cloudflared: %s\n' "$(service_state_openrc cloudflared-cat-monitor)"
+else
+  printf '  mosquitto: %s\n' "$(service_state_systemd mosquitto)"
+  printf '  cat-monitor: %s\n' "$(service_state_systemd cat-monitor.service)"
+  printf '  cloudflared: %s\n' "$(service_state_systemd cloudflared-cat-monitor.service)"
+fi
+
+printf '\nRuntime:\n'
 if command -v cloudflared >/dev/null 2>&1; then
   printf '  cloudflared: installed (%s)\n' "$(cloudflared --version 2>/dev/null | head -n1)"
 else
@@ -398,10 +476,9 @@ printf '\nPaths:\n'
 printf '  app: %s\n' "${APP_DIR}"
 printf '  backend: %s\n' "${APP_DIR}/backend/target/release/cat-monitor-rust-backend"
 printf '  frontend: %s\n' "${APP_DIR}/frontend/dist"
-printf '  zigbee2mqtt: %s\n' "${Z2M_DIR}"
 
 printf '\nAccess:\n'
-printf '  local: http://%s:3033\n' "$(hostname -I 2>/dev/null | awk '{print $1}' || hostname)"
+printf '  local: http://%s:3033\n' "$(hostname -i 2>/dev/null | awk '{print $1}' || hostname)"
 if [ -n "${public_hostname}" ]; then
   printf '  public: https://%s\n' "${public_hostname}"
 else
@@ -409,18 +486,10 @@ else
 fi
 
 printf '\nHints:\n'
-if [ "$(service_state zigbee2mqtt.service)" != 'active' ]; then
-  if ! command -v pnpm >/dev/null 2>&1 && ! command -v corepack >/dev/null 2>&1; then
-    printf '%s\n' '  - Zigbee2MQTT may fail because pnpm/corepack is missing on the Pi.'
-  fi
-fi
-
-if [ "$(service_state cloudflared-cat-monitor.service)" != 'active' ]; then
-  if ! command -v cloudflared >/dev/null 2>&1; then
-    printf '%s\n' '  - Cloudflare Tunnel cannot start because cloudflared is not installed.'
-  elif [ "${tunnel_token_present}" != 'yes' ]; then
-    printf '%s\n' '  - Cloudflare Tunnel cannot start because CLOUDFLARE_TUNNEL_TOKEN is missing in the remote .env.'
-  fi
+if ! command -v cloudflared >/dev/null 2>&1; then
+  printf '%s\n' '  - Cloudflare Tunnel cannot start because cloudflared is not installed.'
+elif [ "${tunnel_token_present}" != 'yes' ]; then
+  printf '%s\n' '  - Cloudflare Tunnel cannot start because CLOUDFLARE_TUNNEL_TOKEN is missing in the remote .env.'
 fi
 EOF
 }
@@ -446,6 +515,9 @@ case "${COMMAND}" in
     ;;
   start)
     start_pi
+    ;;
+  stop)
+    stop_pi
     ;;
   logs)
     logs_pi "${LOG_TARGET}"

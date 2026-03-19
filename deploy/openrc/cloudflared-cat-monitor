@@ -1,0 +1,46 @@
+#!/sbin/openrc-run
+
+name="cloudflared-cat-monitor"
+description="cat-monitor Cloudflare Tunnel"
+app_dir="@@APP_DIR@@"
+env_file="${app_dir}/.env"
+pidfile="/run/${RC_SVCNAME}.pid"
+logfile="/var/log/cloudflared-cat-monitor.log"
+service_user="@@SERVICE_USER@@"
+service_group="@@SERVICE_GROUP@@"
+
+depend() {
+	need net
+	use dns logger cat-monitor
+}
+
+start_pre() {
+	checkpath -f -m 0644 -o "${service_user}:${service_group}" "${logfile}"
+	if [ ! -f "${env_file}" ]; then
+		eerror "Missing env file: ${env_file}"
+		return 1
+	fi
+	if ! command -v cloudflared >/dev/null 2>&1; then
+		eerror "cloudflared is not installed"
+		return 1
+	fi
+	if ! grep -q '^CLOUDFLARE_TUNNEL_TOKEN=.' "${env_file}"; then
+		eerror "CLOUDFLARE_TUNNEL_TOKEN is missing in ${env_file}"
+		return 1
+	fi
+}
+
+start() {
+	ebegin "Starting ${RC_SVCNAME}"
+	start-stop-daemon --start --background --make-pidfile --pidfile "${pidfile}" \
+		--user "${service_user}" --group "${service_group}" --chdir "${app_dir}" \
+		--stdout "${logfile}" --stderr "${logfile}" \
+		--exec /bin/sh -- -lc 'set -a; . "'"${env_file}"'"; set +a; exec cloudflared tunnel --no-autoupdate --protocol "${CLOUDFLARED_PROTOCOL:-http2}" run --token "${CLOUDFLARE_TUNNEL_TOKEN}"'
+	eend $?
+}
+
+stop() {
+	ebegin "Stopping ${RC_SVCNAME}"
+	start-stop-daemon --stop --pidfile "${pidfile}" --retry TERM/30/KILL/5
+	eend $?
+}

@@ -19,7 +19,7 @@ help:
 	@printf "  make backend-release Run the Rust release binary in foreground\n"
 	@printf "  make backend-build-release Build the Rust release binary\n"
 	@printf "  make backend-build-pi Build the Pi-oriented release binary (no BLE)\n"
-	@printf "  make backend-build-pi-cross Cross-build the Pi-oriented binary with zigbuild\n"
+	@printf "  make backend-build-pi-cross Cross-build the Alpine Pi binary with zigbuild\n"
 	@printf "  make backend-start   Start the Rust backend on the host in background\n"
 	@printf "  make backend-start-release Start the Rust release binary in background\n"
 	@printf "  make backend-stop    Stop the host backend\n"

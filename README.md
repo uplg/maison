@@ -56,7 +56,11 @@ For Raspberry Pi 1 deployments, the intended setup is fully host-native:
 Deployment notes and host-native service files are in `docs/raspberry-pi-1.md`, `deploy/systemd/cat-monitor.service`, `deploy/systemd/cloudflared-cat-monitor.service`, `zigbee2mqtt/zigbee2mqtt.service`, and `deploy/mosquitto/cat-monitor.conf`.
 
 There is also a one-shot deployment helper for the Pi: `deploy.sh`.
-It supports `all`, `build`, `push`, `upgrade`, `start`, `status`, and `logs`.
+It supports `all`, `build`, `push`, `upgrade`, `start`, `stop`, `status`, and `logs`.
+
+The Raspberry Pi 1 target now assumes Alpine Linux with OpenRC and a musl backend build.
+
+For first boot without screen or keyboard, use `scripts/flash-alpine-headless-macos.sh` and `docs/alpine-headless-flash-macos.md`.
 
 ## Environment
 

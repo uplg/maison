@@ -1,0 +1,43 @@
+#!/sbin/openrc-run
+
+name="cat-monitor"
+description="cat-monitor backend"
+app_dir="@@APP_DIR@@"
+env_file="${app_dir}/.env"
+backend_bin="${app_dir}/backend/target/release/cat-monitor-rust-backend"
+pidfile="/run/${RC_SVCNAME}.pid"
+logfile="/var/log/cat-monitor.log"
+service_user="@@SERVICE_USER@@"
+service_group="@@SERVICE_GROUP@@"
+
+depend() {
+	need net mosquitto
+	use dns logger
+}
+
+start_pre() {
+	checkpath -f -m 0644 -o "${service_user}:${service_group}" "${logfile}"
+	if [ ! -f "${env_file}" ]; then
+		eerror "Missing env file: ${env_file}"
+		return 1
+	fi
+	if [ ! -x "${backend_bin}" ]; then
+		eerror "Missing backend binary: ${backend_bin}"
+		return 1
+	fi
+}
+
+start() {
+	ebegin "Starting ${RC_SVCNAME}"
+	start-stop-daemon --start --background --make-pidfile --pidfile "${pidfile}" \
+		--user "${service_user}" --group "${service_group}" --chdir "${app_dir}" \
+		--stdout "${logfile}" --stderr "${logfile}" \
+		--exec /bin/sh -- -lc "set -a; . '${env_file}'; set +a; exec '${backend_bin}'"
+	eend $?
+}
+
+stop() {
+	ebegin "Stopping ${RC_SVCNAME}"
+	start-stop-daemon --stop --pidfile "${pidfile}" --retry TERM/30/KILL/5
+	eend $?
+}
