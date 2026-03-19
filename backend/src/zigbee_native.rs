@@ -17,7 +17,7 @@ use tracing::{debug, info, warn};
 
 use crate::error::AppError;
 
-const EZSP_PROTOCOL_VERSION: u8 = 8;
+const DEFAULT_EZSP_PROTOCOL_VERSION: u8 = 13;
 const EZSP_CHANNEL_SIZE: usize = 64;
 const EZSP_INIT_TIMEOUT: StdDuration = StdDuration::from_secs(5);
 const POLL_INTERVAL: StdDuration = StdDuration::from_millis(200);
@@ -86,12 +86,20 @@ struct DriverRequest {
     reply_tx: oneshot::Sender<Result<(), AppError>>,
 }
 
+enum DriverLifecycle {
+    Starting,
+    Ready,
+    Failed(String),
+}
+
 #[derive(Clone)]
 pub struct NativeZigbeeRuntime {
     status: Arc<RwLock<NativeZigbeeStatus>>,
     command_tx: mpsc::Sender<DriverRequest>,
+    command_rx: Arc<Mutex<Option<mpsc::Receiver<DriverRequest>>>>,
     task: Arc<std::sync::Mutex<Option<JoinHandle<()>>>>,
     init_once: Arc<Mutex<bool>>,
+    lifecycle: Arc<RwLock<DriverLifecycle>>,
     adapter: Arc<String>,
     serial_port: Arc<Option<String>>,
 }
@@ -103,7 +111,7 @@ impl NativeZigbeeRuntime {
         let status = Arc::new(RwLock::new(NativeZigbeeStatus {
             connected: false,
             message: Some(match &serial_port {
-                Some(port) => format!("Opening native Zigbee adapter {adapter} on {port}"),
+                Some(port) => format!("Native Zigbee adapter queued for initialization on {port} ({adapter})"),
                 None => format!("Native Zigbee adapter {adapter} selected; set ZIGBEE_SERIAL_PORT to enable it"),
             }),
             last_error: None,
@@ -111,17 +119,14 @@ impl NativeZigbeeRuntime {
         }));
 
         let (command_tx, command_rx) = mpsc::channel(32);
-        let task_status = Arc::clone(&status);
-
-        let task = tokio::spawn(async move {
-            run_native_driver(adapter, serial_port, task_status, command_rx).await;
-        });
 
         Self {
             status,
             command_tx,
-            task: Arc::new(std::sync::Mutex::new(Some(task))),
+            command_rx: Arc::new(Mutex::new(Some(command_rx))),
+            task: Arc::new(std::sync::Mutex::new(None)),
             init_once: Arc::new(Mutex::new(false)),
+            lifecycle: Arc::new(RwLock::new(DriverLifecycle::Starting)),
             adapter: Arc::new(adapter_label),
             serial_port: Arc::new(serial_port_label),
         }
@@ -144,6 +149,8 @@ impl NativeZigbeeRuntime {
     }
 
     pub async fn ensure_initialized(&self) {
+        self.start_task_if_needed().await;
+
         let mut guard = self.init_once.lock().await;
         if *guard {
             return;
@@ -160,6 +167,20 @@ impl NativeZigbeeRuntime {
     }
 
     pub async fn send(&self, command: NativeZigbeeCommand) -> Result<(), AppError> {
+        self.start_task_if_needed().await;
+
+        match &*self.lifecycle.read().await {
+            DriverLifecycle::Starting => {
+                return Err(AppError::service_unavailable(
+                    "Native Zigbee adapter is still initializing",
+                ));
+            }
+            DriverLifecycle::Failed(message) => {
+                return Err(AppError::service_unavailable(message.clone()));
+            }
+            DriverLifecycle::Ready => {}
+        }
+
         let (reply_tx, reply_rx) = oneshot::channel();
         self.command_tx
             .send(DriverRequest { command, reply_tx })
@@ -169,6 +190,28 @@ impl NativeZigbeeRuntime {
         reply_rx
             .await
             .map_err(|_| AppError::service_unavailable("Native Zigbee driver dropped the command response"))?
+    }
+
+    async fn start_task_if_needed(&self) {
+        if self.task.lock().expect("native zigbee task mutex").is_some() {
+            return;
+        }
+
+        let mut command_rx_guard = self.command_rx.lock().await;
+        let Some(command_rx) = command_rx_guard.take() else {
+            return;
+        };
+
+        let adapter = (*self.adapter).clone();
+        let serial_port = (*self.serial_port).clone();
+        let task_status = Arc::clone(&self.status);
+        let lifecycle = Arc::clone(&self.lifecycle);
+
+        let task = tokio::spawn(async move {
+            run_native_driver(adapter, serial_port, task_status, lifecycle, command_rx).await;
+        });
+
+        *self.task.lock().expect("native zigbee task mutex") = Some(task);
     }
 
     pub async fn shutdown(&self) {
@@ -206,6 +249,7 @@ async fn run_native_driver(
     adapter: String,
     serial_port: Option<String>,
     status: Arc<RwLock<NativeZigbeeStatus>>,
+    lifecycle: Arc<RwLock<DriverLifecycle>>,
     mut command_rx: mpsc::Receiver<DriverRequest>,
 ) {
     let Some(serial_port) = serial_port else {
@@ -217,6 +261,9 @@ async fn run_native_driver(
             None,
         )
         .await;
+        *lifecycle.write().await = DriverLifecycle::Failed(
+            "Set ZIGBEE_SERIAL_PORT before using the native Zigbee backend".to_string(),
+        );
         drain_pending_requests(
             &mut command_rx,
             AppError::service_unavailable("Set ZIGBEE_SERIAL_PORT before using the native Zigbee backend"),
@@ -243,6 +290,7 @@ async fn run_native_driver(
                 Some(error.to_string()),
             )
             .await;
+            *lifecycle.write().await = DriverLifecycle::Failed(error.to_string());
             drain_pending_requests(&mut command_rx, error).await;
             return;
         }
@@ -258,6 +306,7 @@ async fn run_native_driver(
 
     match context.uart.network_state().await {
         Ok(state) => {
+            *lifecycle.write().await = DriverLifecycle::Ready;
             set_status(
                 &status,
                 true,
@@ -268,6 +317,7 @@ async fn run_native_driver(
         }
         Err(error) => {
             warn!(serial_port = %serial_port, error = %error, "ezsp network_state failed");
+            *lifecycle.write().await = DriverLifecycle::Ready;
             set_status(
                 &status,
                 true,
@@ -324,16 +374,21 @@ async fn run_native_driver(
 }
 
 async fn open_ezsp_context(serial_port: &str) -> Result<EzspContext, AppError> {
+    let protocol_version = std::env::var("ZIGBEE_EZSP_PROTOCOL_VERSION")
+        .ok()
+        .and_then(|value| value.parse::<u8>().ok())
+        .unwrap_or(DEFAULT_EZSP_PROTOCOL_VERSION);
     let attempts = [
-        (BaudRate::RstCts, FlowControl::Hardware, "rst-cts"),
+        (BaudRate::RstCts, FlowControl::None, "no-flow-control"),
         (BaudRate::XOnXOff, FlowControl::Software, "xon-xoff"),
+        (BaudRate::RstCts, FlowControl::Hardware, "rst-cts"),
     ];
 
     let mut last_error = None;
 
     for (baud_rate, flow_control, label) in attempts {
         info!(serial_port = %serial_port, mode = %label, "opening EZSP serial transport");
-        match try_open_ezsp_context(serial_port, baud_rate, flow_control, label).await {
+        match try_open_ezsp_context(serial_port, baud_rate, flow_control, label, protocol_version).await {
             Ok(context) => return Ok(context),
             Err(error) => {
                 warn!(serial_port = %serial_port, mode = %label, error = %error, "EZSP init attempt failed");
@@ -352,6 +407,7 @@ async fn try_open_ezsp_context(
     baud_rate: BaudRate,
     flow_control: FlowControl,
     mode_label: &str,
+    protocol_version: u8,
 ) -> Result<EzspContext, AppError> {
     let serial = open_ash_serial(serial_port, baud_rate, flow_control)
         .map_err(|error| AppError::service_unavailable(format!(
@@ -367,8 +423,8 @@ async fn try_open_ezsp_context(
     let (tasks, proxy) = actor.spawn();
     let _ = tasks;
 
-    let mut uart = EzspUart::new(proxy, payload_rx, callback_tx, EZSP_PROTOCOL_VERSION, EZSP_CHANNEL_SIZE);
-    info!(serial_port = %serial_port, mode = %mode_label, "initializing EZSP UART");
+    let mut uart = EzspUart::new(proxy, payload_rx, callback_tx, protocol_version, EZSP_CHANNEL_SIZE);
+    info!(serial_port = %serial_port, mode = %mode_label, protocol_version, "initializing EZSP UART");
     timeout(EZSP_INIT_TIMEOUT, uart.init())
         .await
         .map_err(|_| AppError::service_unavailable(format!(

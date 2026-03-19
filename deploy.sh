@@ -10,6 +10,8 @@ PI_SERVICE_GROUP="${PI_SERVICE_GROUP:-${PI_SERVICE_USER}}"
 PI_ENV_FILE="${PI_ENV_FILE:-${ROOT_DIR}/.env}"
 BACKEND_TARGET="${BACKEND_TARGET:-arm-unknown-linux-musleabihf}"
 BACKEND_BIN="${ROOT_DIR}/backend/target/${BACKEND_TARGET}/release/cat-monitor-rust-backend"
+ZIGBEE_PROBE_BIN="${ROOT_DIR}/backend/target/${BACKEND_TARGET}/release/zigbee_probe"
+ZIGBEE_RAW_PROBE_BIN="${ROOT_DIR}/backend/target/${BACKEND_TARGET}/release/zigbee_raw_probe"
 
 RUNTIME_FILES=(
   devices.json
@@ -151,6 +153,18 @@ push_to_pi() {
     exit 1
   fi
 
+  if [ ! -f "${ZIGBEE_PROBE_BIN}" ]; then
+    printf 'Missing zigbee probe artifact: %s\n' "${ZIGBEE_PROBE_BIN}" >&2
+    printf '%s\n' 'Run ./deploy.sh build first.' >&2
+    exit 1
+  fi
+
+  if [ ! -f "${ZIGBEE_RAW_PROBE_BIN}" ]; then
+    printf 'Missing zigbee raw probe artifact: %s\n' "${ZIGBEE_RAW_PROBE_BIN}" >&2
+    printf '%s\n' 'Run ./deploy.sh build first.' >&2
+    exit 1
+  fi
+
   if [ ! -d "${ROOT_DIR}/frontend/dist" ]; then
     printf '%s\n' 'Missing frontend/dist. Run ./deploy.sh build first.' >&2
     exit 1
@@ -158,6 +172,12 @@ push_to_pi() {
 
   log "Pushing backend artifact"
   rsync_pi -avz "${BACKEND_BIN}" "${PI_HOST}:${PI_APP_DIR}/backend/target/release/"
+
+  log "Pushing zigbee probe artifact"
+  rsync_pi -avz "${ZIGBEE_PROBE_BIN}" "${PI_HOST}:${PI_APP_DIR}/backend/target/release/"
+
+  log "Pushing zigbee raw probe artifact"
+  rsync_pi -avz "${ZIGBEE_RAW_PROBE_BIN}" "${PI_HOST}:${PI_APP_DIR}/backend/target/release/"
 
   log "Pushing frontend bundle"
   rsync_pi -avz "${ROOT_DIR}/frontend/dist/" "${PI_HOST}:${PI_APP_DIR}/frontend/dist/"

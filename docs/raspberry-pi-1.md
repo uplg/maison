@@ -208,11 +208,30 @@ You can already switch the backend scaffold with:
 ZIGBEE_BACKEND=native
 ZIGBEE_ADAPTER=ember
 ZIGBEE_SERIAL_PORT=/dev/ttyUSB0
+ZIGBEE_EZSP_PROTOCOL_VERSION=13
 ```
 
 In `native` mode, the existing HTTP/API surface stays intact and persisted lamps remain available, but pairing and radio control still return an explicit "not implemented yet" error until the Rust driver lands.
 
 The current scaffold already opens the serial transport and routes commands through a native driver abstraction, so the next implementation work is focused on real Ember/EZSP frames rather than on restructuring the app again.
+
+For low-level adapter debugging on the Pi, use the dedicated probe binary instead of the web app:
+
+```bash
+ZIGBEE_SERIAL_PORT=/dev/ttyUSB0 ./backend/target/release/zigbee_probe
+```
+
+It tries EZSP init in both `rst-cts` and `xon-xoff` modes and reports where the handshake fails.
+
+`deploy.sh push` now copies `zigbee_probe` together with the main backend binary.
+
+If EZSP still hangs, use the raw serial probe:
+
+```bash
+ZIGBEE_SERIAL_PORT=/dev/ttyUSB0 ./backend/target/release/zigbee_raw_probe
+```
+
+It tries multiple baud rates and flow-control modes, sends a few low-level probe sequences, and dumps raw bytes returned by the dongle.
 
 ## Important caveats
 
