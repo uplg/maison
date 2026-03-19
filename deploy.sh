@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PI_HOST="${PI_HOST:-}"
+PI_PASSWORD="${PI_PASSWORD:-}"
 PI_APP_DIR="${PI_APP_DIR:-/opt/cat-monitor}"
 PI_SERVICE_USER="${PI_SERVICE_USER:-catmonitor}"
 PI_SERVICE_GROUP="${PI_SERVICE_GROUP:-${PI_SERVICE_USER}}"
@@ -38,6 +39,7 @@ Commands:
 
 Environment:
   PI_HOST          SSH target, required for push/upgrade/start/all/logs/status
+  PI_PASSWORD      Optional SSH password used via sshpass when installed locally
   PI_APP_DIR       Remote app directory, default /opt/cat-monitor
   PI_SERVICE_USER  Service user on the Pi, default catmonitor
   PI_SERVICE_GROUP Service group on the Pi, default catmonitor
@@ -67,13 +69,29 @@ require_host() {
   fi
 }
 
+ssh_base_cmd() {
+  if [ -n "${PI_PASSWORD}" ]; then
+    if ! command -v sshpass >/dev/null 2>&1; then
+      printf '%s\n' 'PI_PASSWORD is set but sshpass is not installed. Install it first, for example: brew install hudochenkov/sshpass/sshpass' >&2
+      exit 1
+    fi
+    SSHPASS="${PI_PASSWORD}" sshpass -e "$@"
+  else
+    "$@"
+  fi
+}
+
 run_local() {
   log "$*"
   "$@"
 }
 
 ssh_pi() {
-  ssh "${PI_HOST}" "$@"
+  ssh_base_cmd ssh "${PI_HOST}" "$@"
+}
+
+rsync_pi() {
+  ssh_base_cmd rsync "$@"
 }
 
 build_local() {
@@ -85,7 +103,7 @@ build_local() {
 prepare_remote_push() {
   require_host
   log "Preparing remote host for file sync"
-  ssh "${PI_HOST}" sh -s -- "${PI_APP_DIR}" "${PI_SERVICE_USER}" "${PI_SERVICE_GROUP}" <<'EOF'
+  ssh_pi sh -s -- "${PI_APP_DIR}" "${PI_SERVICE_USER}" "${PI_SERVICE_GROUP}" <<'EOF'
 set -eu
 
 APP_DIR="$1"
@@ -139,28 +157,28 @@ push_to_pi() {
   fi
 
   log "Pushing backend artifact"
-  rsync -avz "${BACKEND_BIN}" "${PI_HOST}:${PI_APP_DIR}/backend/target/release/"
+  rsync_pi -avz "${BACKEND_BIN}" "${PI_HOST}:${PI_APP_DIR}/backend/target/release/"
 
   log "Pushing frontend bundle"
-  rsync -avz "${ROOT_DIR}/frontend/dist/" "${PI_HOST}:${PI_APP_DIR}/frontend/dist/"
+  rsync_pi -avz "${ROOT_DIR}/frontend/dist/" "${PI_HOST}:${PI_APP_DIR}/frontend/dist/"
 
   if [ -f "${PI_ENV_FILE}" ]; then
     log "Pushing env file"
-    rsync -avz "${PI_ENV_FILE}" "${PI_HOST}:${PI_APP_DIR}/.env"
+    rsync_pi -avz "${PI_ENV_FILE}" "${PI_HOST}:${PI_APP_DIR}/.env"
   else
     warn "Env file not found at ${PI_ENV_FILE}; keeping remote .env untouched"
   fi
 
   log "Pushing service templates and configs"
-  rsync -avz "${ROOT_DIR}/deploy/systemd/cat-monitor.service" "${PI_HOST}:${PI_APP_DIR}/deploy/systemd/"
-  rsync -avz "${ROOT_DIR}/deploy/systemd/cloudflared-cat-monitor.service" "${PI_HOST}:${PI_APP_DIR}/deploy/systemd/"
-  rsync -avz "${ROOT_DIR}/deploy/openrc/cat-monitor" "${PI_HOST}:${PI_APP_DIR}/deploy/openrc/"
-  rsync -avz "${ROOT_DIR}/deploy/openrc/cloudflared-cat-monitor" "${PI_HOST}:${PI_APP_DIR}/deploy/openrc/"
-  rsync -avz "${ROOT_DIR}/deploy/mosquitto/cat-monitor.conf" "${PI_HOST}:${PI_APP_DIR}/deploy/mosquitto/"
+  rsync_pi -avz "${ROOT_DIR}/deploy/systemd/cat-monitor.service" "${PI_HOST}:${PI_APP_DIR}/deploy/systemd/"
+  rsync_pi -avz "${ROOT_DIR}/deploy/systemd/cloudflared-cat-monitor.service" "${PI_HOST}:${PI_APP_DIR}/deploy/systemd/"
+  rsync_pi -avz "${ROOT_DIR}/deploy/openrc/cat-monitor" "${PI_HOST}:${PI_APP_DIR}/deploy/openrc/"
+  rsync_pi -avz "${ROOT_DIR}/deploy/openrc/cloudflared-cat-monitor" "${PI_HOST}:${PI_APP_DIR}/deploy/openrc/"
+  rsync_pi -avz "${ROOT_DIR}/deploy/mosquitto/cat-monitor.conf" "${PI_HOST}:${PI_APP_DIR}/deploy/mosquitto/"
 
   if [ -d "${ROOT_DIR}/mosquitto/certs" ]; then
     log "Pushing Mosquitto certificates"
-    rsync -avz "${ROOT_DIR}/mosquitto/certs/" "${PI_HOST}:${PI_APP_DIR}/mosquitto/certs/"
+    rsync_pi -avz "${ROOT_DIR}/mosquitto/certs/" "${PI_HOST}:${PI_APP_DIR}/mosquitto/certs/"
   else
     warn "mosquitto/certs is missing locally; TLS listener deployment may fail"
   fi
@@ -168,20 +186,20 @@ push_to_pi() {
   for relative_path in "${RUNTIME_FILES[@]}"; do
     if [ -f "${ROOT_DIR}/${relative_path}" ]; then
       log "Pushing ${relative_path}"
-      rsync -avz "${ROOT_DIR}/${relative_path}" "${PI_HOST}:${PI_APP_DIR}/"
+      rsync_pi -avz "${ROOT_DIR}/${relative_path}" "${PI_HOST}:${PI_APP_DIR}/"
     fi
   done
 
   if [ -d "${ROOT_DIR}/cache" ]; then
     log "Pushing cache directory"
-    rsync -avz "${ROOT_DIR}/cache/" "${PI_HOST}:${PI_APP_DIR}/cache/"
+    rsync_pi -avz "${ROOT_DIR}/cache/" "${PI_HOST}:${PI_APP_DIR}/cache/"
   fi
 }
 
 upgrade_pi() {
   require_host
   log "Upgrading host-native services on the Pi"
-  ssh "${PI_HOST}" sh -s -- "${PI_APP_DIR}" "${PI_SERVICE_USER}" "${PI_SERVICE_GROUP}" <<'EOF'
+  ssh_pi sh -s -- "${PI_APP_DIR}" "${PI_SERVICE_USER}" "${PI_SERVICE_GROUP}" <<'EOF'
 set -eu
 
 APP_DIR="$1"
@@ -189,6 +207,26 @@ SERVICE_USER="$2"
 SERVICE_GROUP="$3"
 
 mkdir -p "${APP_DIR}/cache/tempo"
+
+for runtime_file in \
+  "${APP_DIR}/device-cache.json" \
+  "${APP_DIR}/broadlink-codes.json" \
+  "${APP_DIR}/hue-lamps.json" \
+  "${APP_DIR}/hue-lamps-blacklist.json" \
+  "${APP_DIR}/zigbee-lamps.json" \
+  "${APP_DIR}/zigbee-lamps-blacklist.json"
+do
+  if [ ! -e "${runtime_file}" ]; then
+    case "${runtime_file}" in
+      *broadlink-codes.json)
+        printf '%s\n' '{"codes":[]}' > "${runtime_file}"
+        ;;
+      *)
+        printf '%s\n' '[]' > "${runtime_file}"
+        ;;
+    esac
+  fi
+done
 
 for mutable_path in \
   "${APP_DIR}/cache" \
@@ -257,12 +295,54 @@ EOF
 start_pi() {
   require_host
   log "Installing service definitions and restarting the stack"
-  ssh "${PI_HOST}" sh -s -- "${PI_APP_DIR}" "${PI_SERVICE_USER}" "${PI_SERVICE_GROUP}" <<'EOF'
+  ssh_pi sh -s -- "${PI_APP_DIR}" "${PI_SERVICE_USER}" "${PI_SERVICE_GROUP}" <<'EOF'
 set -eu
 
 APP_DIR="$1"
 SERVICE_USER="$2"
 SERVICE_GROUP="$3"
+
+mkdir -p \
+  "${APP_DIR}/cache" \
+  "${APP_DIR}/cache/tempo" \
+  "${APP_DIR}/frontend/dist" \
+  "${APP_DIR}/backend/target/release" \
+  "${APP_DIR}/deploy/openrc" \
+  "${APP_DIR}/deploy/mosquitto"
+
+for runtime_file in \
+  "${APP_DIR}/device-cache.json" \
+  "${APP_DIR}/broadlink-codes.json" \
+  "${APP_DIR}/hue-lamps.json" \
+  "${APP_DIR}/hue-lamps-blacklist.json" \
+  "${APP_DIR}/zigbee-lamps.json" \
+  "${APP_DIR}/zigbee-lamps-blacklist.json"
+do
+  if [ ! -e "${runtime_file}" ]; then
+    case "${runtime_file}" in
+      *broadlink-codes.json)
+        printf '%s\n' '{"codes":[]}' > "${runtime_file}"
+        ;;
+      *)
+        printf '%s\n' '[]' > "${runtime_file}"
+        ;;
+    esac
+  fi
+done
+
+for mutable_path in \
+  "${APP_DIR}/cache" \
+  "${APP_DIR}/device-cache.json" \
+  "${APP_DIR}/broadlink-codes.json" \
+  "${APP_DIR}/hue-lamps.json" \
+  "${APP_DIR}/hue-lamps-blacklist.json" \
+  "${APP_DIR}/zigbee-lamps.json" \
+  "${APP_DIR}/zigbee-lamps-blacklist.json"
+do
+  if [ -e "${mutable_path}" ]; then
+    chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${mutable_path}"
+  fi
+done
 
 if [ -r /etc/os-release ]; then
   . /etc/os-release
@@ -316,7 +396,7 @@ EOF
 stop_pi() {
   require_host
   log "Stopping the stack on the Pi"
-  ssh "${PI_HOST}" sh -s <<'EOF'
+  ssh_pi sh -s <<'EOF'
 set -eu
 
 if [ -r /etc/os-release ]; then
@@ -346,7 +426,7 @@ logs_pi() {
   require_host
   local target="${1:-stack}"
   log "Following ${target} logs on the Pi"
-  ssh "${PI_HOST}" sh -s -- "${target}" <<'EOF'
+  ssh_pi sh -s -- "${target}" <<'EOF'
 set -eu
 TARGET="$1"
 
@@ -407,7 +487,7 @@ EOF
 status_pi() {
   require_host
   log "Collecting deployment status from the Pi"
-  ssh "${PI_HOST}" sh -s -- "${PI_APP_DIR}" <<'EOF'
+  ssh_pi sh -s -- "${PI_APP_DIR}" <<'EOF'
 set -eu
 
 APP_DIR="$1"

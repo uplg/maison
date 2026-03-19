@@ -91,6 +91,7 @@ PI_HOST=pi@192.168.1.50 ./deploy.sh start
 PI_HOST=pi@192.168.1.50 ./deploy.sh stop
 PI_HOST=pi@192.168.1.50 ./deploy.sh status
 PI_HOST=pi@192.168.1.50 ./deploy.sh logs backend
+PI_HOST=pi@192.168.1.50 PI_PASSWORD='secret' ./deploy.sh push
 ```
 
 That runs `scripts/build-rpi1-backend.sh`, which:
@@ -200,6 +201,18 @@ The service uses the same `.env` file as the backend and runs only when `CLOUDFL
 Node and Zigbee2MQTT are no longer the deployment target for Raspberry Pi 1 on Alpine.
 
 Mosquitto stays in place because Meross still needs MQTT. The next step is a minimal Rust Zigbee bridge that can publish a compatible subset of topics on the local broker without dragging in Node.
+
+You can already switch the backend scaffold with:
+
+```bash
+ZIGBEE_BACKEND=native
+ZIGBEE_ADAPTER=ember
+ZIGBEE_SERIAL_PORT=/dev/ttyUSB0
+```
+
+In `native` mode, the existing HTTP/API surface stays intact and persisted lamps remain available, but pairing and radio control still return an explicit "not implemented yet" error until the Rust driver lands.
+
+The current scaffold already opens the serial transport and routes commands through a native driver abstraction, so the next implementation work is focused on real Ember/EZSP frames rather than on restructuring the app again.
 
 ## Important caveats
 

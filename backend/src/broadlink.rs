@@ -113,7 +113,7 @@ impl BroadlinkManager {
     pub fn new(codes_path: &Path) -> Result<Self, AppError> {
         let codes = if codes_path.exists() {
             let content = std::fs::read_to_string(codes_path)?;
-            serde_json::from_str::<StoredCodes>(&content)?
+            load_stored_codes(&content)?
         } else {
             StoredCodes::default()
         };
@@ -421,6 +421,23 @@ impl BroadlinkManager {
         };
         write_string_to_path(self.codes_path.as_path(), &format!("{payload}\n"))
     }
+}
+
+fn load_stored_codes(content: &str) -> Result<StoredCodes, AppError> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Ok(StoredCodes::default());
+    }
+
+    if let Ok(stored) = serde_json::from_str::<StoredCodes>(trimmed) {
+        return Ok(stored);
+    }
+
+    if let Ok(codes) = serde_json::from_str::<Vec<BroadlinkCodeEntry>>(trimmed) {
+        return Ok(StoredCodes { codes });
+    }
+
+    Err(serde_json::from_str::<StoredCodes>(trimmed).unwrap_err().into())
 }
 
 fn parse_ipv4(value: &str) -> Result<Ipv4Addr, AppError> {

@@ -57,10 +57,13 @@ Deployment notes and host-native service files are in `docs/raspberry-pi-1.md`, 
 
 There is also a one-shot deployment helper for the Pi: `deploy.sh`.
 It supports `all`, `build`, `push`, `upgrade`, `start`, `stop`, `status`, and `logs`.
+It also accepts `PI_PASSWORD` for password-based SSH when `sshpass` is installed locally.
 
 The Raspberry Pi 1 target now assumes Alpine Linux with OpenRC and a musl backend build.
 
 For first boot without screen or keyboard, use `scripts/flash-alpine-headless-macos.sh` and `docs/alpine-headless-flash-macos.md`.
+
+For Zigbee, the backend now recognizes `ZIGBEE_BACKEND=mqtt` (current Zigbee2MQTT flow) and `ZIGBEE_BACKEND=native` (Rust-native replacement scaffold for lamps).
 
 ## Environment
 

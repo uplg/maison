@@ -13,6 +13,7 @@ pub mod routes;
 pub mod tempo;
 pub mod tuya;
 pub mod zigbee;
+pub mod zigbee_native;
 
 pub use tempo::TempoService;
 
