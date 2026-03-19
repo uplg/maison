@@ -333,6 +333,7 @@ struct DiscoveredDevice {
     output_clusters: Vec<u16>,
     supports_brightness: bool,
     supports_temperature: bool,
+    has_color_control_cluster: bool,
     is_on: bool,
     brightness: u8,
     temperature: Option<u8>,
@@ -1065,7 +1066,7 @@ async fn refresh_device_state(context: &mut EzspContext, target: &DiscoveredDevi
     if target.input_clusters.contains(&LEVEL_CONTROL_CLUSTER_ID) {
         send_read_attributes(context, target.node_id, endpoint, LEVEL_CONTROL_CLUSTER_ID, &[0x0000]).await?;
     }
-    if target.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID) {
+    if target.has_color_control_cluster {
         send_read_attributes(context, target.node_id, endpoint, COLOR_CONTROL_CLUSTER_ID, &[0x0007]).await?;
     }
 
@@ -1132,6 +1133,7 @@ async fn handle_callback(context: &mut EzspContext, callback: Callback) -> Optio
                             output_clusters: Vec::new(),
                             supports_brightness: false,
                             supports_temperature: false,
+                            has_color_control_cluster: false,
                             is_on: false,
                             brightness: 0,
                             temperature: None,
@@ -1146,7 +1148,7 @@ async fn handle_callback(context: &mut EzspContext, callback: Callback) -> Optio
                         device.connected = true;
                         device.reachable = true;
                     }
-                    let _ = request_active_endpoints(context, node_id).await;
+                    request_known_device_discovery(context, node_id).await;
                     Some(NativeZigbeeEvent::DeviceJoined {
                         node_id,
                         eui64,
@@ -1192,7 +1194,7 @@ async fn handle_trust_center_join(
         | EmberDeviceUpdate::StandardSecurityUnsecuredJoin
         | EmberDeviceUpdate::StandardSecurityUnsecuredRejoin => {
             ensure_joined_device(context, node_id, eui64.clone());
-            let _ = request_active_endpoints(context, node_id).await;
+            request_known_device_discovery(context, node_id).await;
             Some(NativeZigbeeEvent::DeviceJoined { node_id, eui64 })
         }
         EmberDeviceUpdate::DeviceLeft => {
@@ -1228,6 +1230,7 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
             output_clusters: Vec::new(),
             supports_brightness: false,
             supports_temperature: false,
+            has_color_control_cluster: false,
             is_on: true,
             brightness: 100,
             temperature: None,
@@ -1348,6 +1351,19 @@ fn should_probe_active_endpoints(target: &DiscoveredDevice) -> bool {
     target.endpoint.is_none() || target.input_clusters.is_empty()
 }
 
+async fn request_known_device_discovery(context: &mut EzspContext, node_id: u16) {
+    let target = context.joined_devices.iter().find(|device| device.node_id == node_id).cloned();
+    let Some(target) = target else {
+        return;
+    };
+
+    if should_probe_active_endpoints(&target) {
+        let _ = request_active_endpoints(context, node_id).await;
+    } else {
+        let _ = refresh_device_state(context, &target).await;
+    }
+}
+
 async fn handle_incoming_cluster(
     context: &mut EzspContext,
     node_id: u16,
@@ -1358,7 +1374,7 @@ async fn handle_incoming_cluster(
         DEVICE_ANNCE_CLUSTER_ID => {
             if let Some(announcement) = parse_device_announce(payload) {
                 ensure_joined_device(context, announcement.node_id, announcement.eui64.clone());
-                let _ = request_active_endpoints(context, announcement.node_id).await;
+                request_known_device_discovery(context, announcement.node_id).await;
                 Some(NativeZigbeeEvent::DeviceAnnounced {
                     node_id: announcement.node_id,
                     eui64: announcement.eui64,
@@ -1404,7 +1420,8 @@ async fn handle_incoming_cluster(
                         device.input_clusters = description.input_clusters.clone();
                         device.output_clusters = description.output_clusters.clone();
                         device.supports_brightness = description.input_clusters.contains(&LEVEL_CONTROL_CLUSTER_ID);
-                        device.supports_temperature = description.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID);
+                        device.has_color_control_cluster = description.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID);
+                        device.supports_temperature = device.supports_temperature && device.has_color_control_cluster;
                         device.interview_completed = true;
                         device.interview_attempts = 0;
                         refresh_target = Some(device.clone());
@@ -1508,6 +1525,7 @@ fn parse_zcl_read_attributes_response(
                 (COLOR_CONTROL_CLUSTER_ID, 0x0007) if value_bytes.len() >= 2 => {
                     let raw = u16::from(value_bytes[0]) | (u16::from(value_bytes[1]) << 8);
                     let normalized = (((500_u16.saturating_sub(raw.min(500))) * 100) / (500 - 153)) as u8;
+                    device.supports_temperature = true;
                     device.temperature = Some(normalized.min(100));
                 }
                 (BASIC_CLUSTER_ID, 0x0004) => {
@@ -1784,6 +1802,7 @@ fn seed_known_device(device: NativeKnownDevice) -> DiscoveredDevice {
         node_id: device.node_id,
         eui64: device.eui64,
         endpoint: device.endpoint,
+        has_color_control_cluster: device.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID),
         input_clusters: device.input_clusters,
         output_clusters: device.output_clusters,
         supports_brightness: device.supports_brightness,
@@ -1904,6 +1923,7 @@ mod tests {
             output_clusters: vec![25],
             supports_brightness: true,
             supports_temperature: false,
+            has_color_control_cluster: false,
             is_on: true,
             brightness: 100,
             temperature: None,
@@ -1924,5 +1944,58 @@ mod tests {
         let mut missing_clusters = base;
         missing_clusters.input_clusters.clear();
         assert!(should_probe_active_endpoints(&missing_clusters));
+    }
+
+    #[test]
+    fn announce_reuses_known_endpoint_without_reprobe() {
+        let known = super::DiscoveredDevice {
+            node_id: 0x2e34,
+            eui64: "4b:8e:c6:08:01:88:17:00".to_string(),
+            endpoint: Some(11),
+            input_clusters: vec![0, 3, 4, 5, 6, 8],
+            output_clusters: vec![25],
+            supports_brightness: true,
+            supports_temperature: false,
+            has_color_control_cluster: false,
+            is_on: true,
+            brightness: 100,
+            temperature: None,
+            interview_completed: true,
+            model: Some("LTG002".to_string()),
+            manufacturer: Some("Signify Netherlands B.V.".to_string()),
+            connected: true,
+            reachable: true,
+            interview_attempts: 0,
+        };
+
+        assert!(!should_probe_active_endpoints(&known));
+    }
+
+    #[test]
+    fn color_control_cluster_does_not_imply_temperature_support() {
+        let mut device = super::DiscoveredDevice {
+            node_id: 0x2e34,
+            eui64: "4b:8e:c6:08:01:88:17:00".to_string(),
+            endpoint: Some(11),
+            input_clusters: vec![0, 3, 4, 5, 6, 8, super::COLOR_CONTROL_CLUSTER_ID],
+            output_clusters: vec![25],
+            supports_brightness: true,
+            supports_temperature: false,
+            has_color_control_cluster: true,
+            is_on: true,
+            brightness: 100,
+            temperature: None,
+            interview_completed: true,
+            model: Some("LTG002".to_string()),
+            manufacturer: Some("Signify Netherlands B.V.".to_string()),
+            connected: true,
+            reachable: true,
+            interview_attempts: 0,
+        };
+
+        device.supports_temperature = device.supports_temperature && device.has_color_control_cluster;
+
+        assert!(device.has_color_control_cluster);
+        assert!(!device.supports_temperature);
     }
 }
