@@ -350,6 +350,14 @@ struct DiscoveredDevice {
     reachable: bool,
     interview_attempts: u32,
     last_seen: Option<Instant>,
+    /// Last user-requested brightness (0–100).  Re-applied when the device becomes reachable again.
+    desired_brightness: Option<u8>,
+    /// Last user-requested colour temperature (0–100).  Re-applied on reconnect.
+    desired_temperature: Option<u8>,
+    /// Set to `false` when the device becomes unreachable; set back to `true` after
+    /// `restore_desired_state` successfully re-sends the desired brightness/temperature.
+    /// This prevents re-sending every 30 s — we only restore on the unreachable→reachable transition.
+    desired_state_applied: bool,
 }
 
 async fn run_native_driver(
@@ -497,6 +505,7 @@ async fn run_native_driver(
                 if tick_count % LIVENESS_PROBE_INTERVAL_TICKS == 0 {
                     expire_unreachable_devices(&mut context);
                     run_liveness_probes(&mut context).await;
+                    restore_desired_state(&mut context).await;
                     sync_status_devices(&status, &context.joined_devices).await;
                 }
             }
@@ -981,6 +990,7 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
             if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == target.node_id) {
                 device.brightness = brightness.min(100);
                 device.is_on = brightness > 0;
+                device.desired_brightness = Some(brightness.min(100));
             }
 
             Ok(())
@@ -1025,6 +1035,7 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
 
             if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == target.node_id) {
                 device.temperature = Some(temperature.min(100));
+                device.desired_temperature = Some(temperature.min(100));
             }
 
             Ok(())
@@ -1142,6 +1153,9 @@ async fn handle_callback(context: &mut EzspContext, callback: Callback) -> Optio
                             reachable: true,
                             interview_attempts: 0,
                             last_seen: Some(Instant::now()),
+                            desired_brightness: None,
+                            desired_temperature: None,
+                            desired_state_applied: true,
                         });
                     } else if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == node_id) {
                         device.connected = true;
@@ -1242,6 +1256,9 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
             reachable: true,
             interview_attempts: 0,
             last_seen: Some(Instant::now()),
+            desired_brightness: None,
+            desired_temperature: None,
+            desired_state_applied: true,
         });
     }
 }
@@ -1267,6 +1284,8 @@ fn expire_unreachable_devices(context: &mut EzspContext) {
                 LIVENESS_TIMEOUT,
             );
             device.reachable = false;
+            // Mark desired state as unapplied so it will be re-sent when the device comes back.
+            device.desired_state_applied = false;
         }
     }
 }
@@ -1326,6 +1345,149 @@ async fn run_liveness_probes(context: &mut EzspContext) {
 async fn drain_pending_callbacks(context: &mut EzspContext) {
     while let Ok(callback) = context.callbacks_rx.try_recv() {
         handle_callback(context, callback).await;
+    }
+}
+
+/// Re-apply desired brightness and/or colour temperature to devices that have just
+/// transitioned from unreachable to reachable (i.e. `reachable && !desired_state_applied`).
+///
+/// This handles the physical wall-switch scenario: a user turns off a lamp at the wall,
+/// then turns it back on.  The lamp powers up at factory defaults, so we push the last
+/// user-set brightness and temperature to it.
+///
+/// The lamp is intentionally forced ON when it reappears (handled elsewhere via
+/// `ensure_joined_device`), so we do **not** touch the on/off state here.
+///
+/// **IMPORTANT**: no `timeout()` wrapper — see [`run_liveness_probes`] doc comment.
+async fn restore_desired_state(context: &mut EzspContext) {
+    // Collect targets: devices that are reachable, have an endpoint, and have unapplied desired state.
+    let targets: Vec<(u16, u8, Option<u8>, Option<u8>, bool, bool)> = context
+        .joined_devices
+        .iter()
+        .filter(|d| d.reachable && !d.desired_state_applied && d.endpoint.is_some())
+        .filter(|d| d.desired_brightness.is_some() || d.desired_temperature.is_some())
+        .map(|d| {
+            (
+                d.node_id,
+                d.endpoint.unwrap(),
+                d.desired_brightness,
+                d.desired_temperature,
+                d.supports_brightness,
+                d.supports_temperature,
+            )
+        })
+        .collect();
+
+    for (node_id, endpoint, desired_brightness, desired_temperature, supports_brightness, supports_temperature) in targets {
+        // Restore brightness
+        if let Some(brightness) = desired_brightness {
+            if supports_brightness {
+                let sequence = next_device_sequence(context, node_id);
+                let zcl_payload = build_brightness_command_payload(brightness, sequence);
+                let aps_frame = EzspApsFrame::new(
+                    HOME_AUTOMATION_PROFILE_ID,
+                    LEVEL_CONTROL_CLUSTER_ID,
+                    DEFAULT_SOURCE_ENDPOINT,
+                    endpoint,
+                    EzspApsOptions::RETRY | EzspApsOptions::ENABLE_ROUTE_DISCOVERY,
+                    0,
+                    0,
+                );
+
+                match context
+                    .uart
+                    .send_unicast(
+                        Destination::Direct(NodeId::from(node_id)),
+                        aps_frame,
+                        0,
+                        zcl_payload.into_iter().collect(),
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        info!(
+                            node_id = format_args!("0x{node_id:04x}"),
+                            brightness,
+                            "restored desired brightness after reconnect"
+                        );
+                        if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+                            device.brightness = brightness;
+                            device.is_on = brightness > 0;
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            node_id = format_args!("0x{node_id:04x}"),
+                            error = %error,
+                            "failed to restore desired brightness"
+                        );
+                        // Don't mark as applied — retry next cycle.
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Restore colour temperature
+        if let Some(temperature) = desired_temperature {
+            if supports_temperature {
+                let sequence = next_device_sequence(context, node_id);
+                let zcl_payload = build_color_temperature_command_payload(temperature, sequence);
+                let aps_frame = EzspApsFrame::new(
+                    HOME_AUTOMATION_PROFILE_ID,
+                    COLOR_CONTROL_CLUSTER_ID,
+                    DEFAULT_SOURCE_ENDPOINT,
+                    endpoint,
+                    EzspApsOptions::RETRY | EzspApsOptions::ENABLE_ROUTE_DISCOVERY,
+                    0,
+                    0,
+                );
+
+                match context
+                    .uart
+                    .send_unicast(
+                        Destination::Direct(NodeId::from(node_id)),
+                        aps_frame,
+                        0,
+                        zcl_payload.into_iter().collect(),
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        info!(
+                            node_id = format_args!("0x{node_id:04x}"),
+                            temperature,
+                            "restored desired colour temperature after reconnect"
+                        );
+                        if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+                            device.temperature = Some(temperature);
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            node_id = format_args!("0x{node_id:04x}"),
+                            error = %error,
+                            "failed to restore desired colour temperature"
+                        );
+                        // Don't mark as applied — retry next cycle.
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Both commands succeeded (or were skipped because unsupported) — mark as applied.
+        if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+            device.desired_state_applied = true;
+            info!(
+                node_id = format_args!("0x{node_id:04x}"),
+                eui64 = %device.eui64,
+                "desired state fully restored after reconnect"
+            );
+        }
+
+        // Drain callbacks so any responses update device state promptly.
+        drain_pending_callbacks(context).await;
     }
 }
 
@@ -1911,6 +2073,9 @@ fn seed_known_device(device: NativeKnownDevice) -> DiscoveredDevice {
         reachable: false,
         interview_attempts: 0,
         last_seen: None,
+        desired_brightness: None,
+        desired_temperature: None,
+        desired_state_applied: true,
     }
 }
 
@@ -2029,6 +2194,9 @@ mod tests {
             reachable: true,
             interview_attempts: 0,
             last_seen: None,
+            desired_brightness: None,
+            desired_temperature: None,
+            desired_state_applied: true,
         };
 
         assert!(!should_probe_active_endpoints(&base));
@@ -2063,6 +2231,9 @@ mod tests {
             reachable: true,
             interview_attempts: 0,
             last_seen: None,
+            desired_brightness: None,
+            desired_temperature: None,
+            desired_state_applied: true,
         };
 
         assert!(!should_probe_active_endpoints(&known));
@@ -2089,6 +2260,9 @@ mod tests {
             reachable: true,
             interview_attempts: 0,
             last_seen: None,
+            desired_brightness: None,
+            desired_temperature: None,
+            desired_state_applied: true,
         };
 
         device.supports_temperature = device.supports_temperature && device.has_color_control_cluster;
