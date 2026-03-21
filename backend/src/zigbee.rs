@@ -1234,7 +1234,7 @@ impl NativeZigbeeManager {
                 connected: device.connected,
                 reachable: device.reachable,
                 link_quality: None,
-                last_seen: None,
+                last_seen: device.last_seen.clone(),
                 interview_completed: device.endpoint.is_some(),
             });
 
@@ -1252,6 +1252,9 @@ impl NativeZigbeeManager {
             runtime.connected = device.connected;
             runtime.reachable = device.reachable;
             runtime.interview_completed = device.endpoint.is_some();
+            if device.last_seen.is_some() {
+                runtime.last_seen = device.last_seen.clone();
+            }
             if device.connected {
                 runtime.state.is_on = device.is_on;
                 runtime.state.brightness = device.brightness;
@@ -1777,6 +1780,7 @@ mod tests {
                 temperature: None,
                 model: Some("LTG002".to_string()),
                 manufacturer: Some("Signify Netherlands B.V.".to_string()),
+                last_seen: None,
         }]).await;
         manager.inner.runtime.test_set_lifecycle(DriverLifecycle::Failed("boom".to_string())).await;
         manager.inner.runtime.test_set_network_state("joined").await;

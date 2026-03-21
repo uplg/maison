@@ -196,7 +196,7 @@ export function ZigbeeLampControl({ lampId }: ZigbeeLampControlProps) {
     );
   }
 
-  const isConnected = lamp.connected;
+  const isConnected = lamp.reachable;
 
   return (
     <div className="space-y-4">
@@ -260,7 +260,7 @@ export function ZigbeeLampControl({ lampId }: ZigbeeLampControlProps) {
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="flex flex-wrap gap-2">
-            {lamp.connected ? (
+            {lamp.reachable ? (
               <Badge variant="success">
                 <Wifi className="mr-1 h-3 w-3" />
                 {t("common.connected")}
@@ -351,7 +351,7 @@ export function ZigbeeLampControl({ lampId }: ZigbeeLampControlProps) {
           </div>
           <div className="flex justify-between gap-4">
             <span className="text-muted-foreground">{t("zigbeeLamps.lastSeen")}</span>
-            <span>{lamp.lastSeen ?? "-"}</span>
+            <span>{lamp.lastSeen ? new Date(lamp.lastSeen).toLocaleString() : "-"}</span>
           </div>
         </CardContent>
       </Card>

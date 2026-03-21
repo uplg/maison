@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration as StdDuration};
 
 use ashv2::{Actor as AshActor, BaudRate, FlowControl, Payload, open as open_ash_serial};
+use chrono::Utc;
 use ezsp::{
     Callback, Configuration, Ezsp, Messaging, Networking, Security, Utilities,
     ember::{
@@ -20,7 +21,7 @@ use ezsp::{
 use tokio::{
     sync::{Mutex, RwLock, mpsc, oneshot},
     task::JoinHandle,
-    time::{MissedTickBehavior, interval, timeout},
+    time::{Instant, MissedTickBehavior, interval, timeout},
 };
 use tracing::{debug, info, warn};
 
@@ -61,6 +62,13 @@ const DEFAULT_LOCAL_INPUT_CLUSTERS: &[u16] = &[0x0000, 0x0006, 0x0008, 0x0300, 0
 const DEFAULT_LOCAL_OUTPUT_CLUSTERS: &[u16] = &[0x0000, 0x0006, 0x0008, 0x0300, 0x0403];
 const ZIGBEE_ALLIANCE09_LINK_KEY: EmberKeyData = *b"ZigBeeAlliance09";
 
+/// Interval between liveness probes in tick counts (150 ticks * 200ms = 30 seconds).
+const LIVENESS_PROBE_INTERVAL_TICKS: u32 = 150;
+/// Duration after which a device with no response is considered unreachable.
+const LIVENESS_TIMEOUT: StdDuration = StdDuration::from_secs(90);
+/// Timeout for individual liveness probe ZCL reads.
+const LIVENESS_PROBE_TIMEOUT: StdDuration = StdDuration::from_millis(750);
+
 #[derive(Debug, Clone)]
 pub enum NativeZigbeeCommand {
     PermitJoin { seconds: u16 },
@@ -97,6 +105,7 @@ pub struct NativeDiscoveredDevice {
     pub temperature: Option<u8>,
     pub model: Option<String>,
     pub manufacturer: Option<String>,
+    pub last_seen: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -343,6 +352,7 @@ struct DiscoveredDevice {
     connected: bool,
     reachable: bool,
     interview_attempts: u32,
+    last_seen: Option<Instant>,
 }
 
 async fn run_native_driver(
@@ -484,6 +494,12 @@ async fn run_native_driver(
 
                 if tick_count % DISCOVERY_RETRY_INTERVAL_TICKS == 0 {
                     retry_pending_interviews(&mut context).await;
+                    sync_status_devices(&status, &context.joined_devices).await;
+                }
+
+                if tick_count % LIVENESS_PROBE_INTERVAL_TICKS == 0 {
+                    expire_unreachable_devices(&mut context);
+                    run_liveness_probes(&mut context).await;
                     sync_status_devices(&status, &context.joined_devices).await;
                 }
             }
@@ -1143,10 +1159,12 @@ async fn handle_callback(context: &mut EzspContext, callback: Callback) -> Optio
                             connected: true,
                             reachable: true,
                             interview_attempts: 0,
+                            last_seen: Some(Instant::now()),
                         });
                     } else if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == node_id) {
                         device.connected = true;
                         device.reachable = true;
+                        device.last_seen = Some(Instant::now());
                     }
                     request_known_device_discovery(context, node_id).await;
                     Some(NativeZigbeeEvent::DeviceJoined {
@@ -1214,6 +1232,7 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
         device.eui64 = eui64;
         device.connected = true;
         device.reachable = true;
+        device.last_seen = Some(Instant::now());
         device.is_on = true;
         if device.brightness == 0 {
             device.brightness = 100;
@@ -1240,7 +1259,75 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
             connected: true,
             reachable: true,
             interview_attempts: 0,
+            last_seen: Some(Instant::now()),
         });
+    }
+}
+
+/// Mark devices as unreachable if they haven't responded within [`LIVENESS_TIMEOUT`].
+fn expire_unreachable_devices(context: &mut EzspContext) {
+    let now = Instant::now();
+    for device in &mut context.joined_devices {
+        if !device.reachable || device.endpoint.is_none() {
+            continue;
+        }
+
+        let is_expired = device
+            .last_seen
+            .map_or(true, |last_seen| now.duration_since(last_seen) > LIVENESS_TIMEOUT);
+
+        if is_expired {
+            debug!(
+                node_id = format_args!("0x{:04x}", device.node_id),
+                eui64 = %device.eui64,
+                "native zigbee device marked unreachable (no response within {:?})",
+                LIVENESS_TIMEOUT,
+            );
+            device.reachable = false;
+        }
+    }
+}
+
+/// Send a lightweight ZCL Read Attributes probe (On/Off attribute 0x0000) to all
+/// reachable, interviewed devices. The response will be handled asynchronously via
+/// [`handle_incoming_cluster`] which updates `last_seen` and `reachable`.
+async fn run_liveness_probes(context: &mut EzspContext) {
+    let targets: Vec<(u16, u8)> = context
+        .joined_devices
+        .iter()
+        .filter(|device| device.endpoint.is_some() && device.interview_completed)
+        .filter(|device| device.input_clusters.contains(&ON_OFF_CLUSTER_ID))
+        .map(|device| (device.node_id, device.endpoint.unwrap()))
+        .collect();
+
+    for (node_id, endpoint) in targets {
+        let result = timeout(
+            LIVENESS_PROBE_TIMEOUT,
+            send_read_attributes(context, node_id, endpoint, ON_OFF_CLUSTER_ID, &[0x0000]),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(())) => {
+                debug!(
+                    node_id = format_args!("0x{node_id:04x}"),
+                    "liveness probe sent"
+                );
+            }
+            Ok(Err(error)) => {
+                warn!(
+                    node_id = format_args!("0x{node_id:04x}"),
+                    error = %error,
+                    "liveness probe send failed"
+                );
+            }
+            Err(_) => {
+                warn!(
+                    node_id = format_args!("0x{node_id:04x}"),
+                    "liveness probe send timed out"
+                );
+            }
+        }
     }
 }
 
@@ -1408,6 +1495,7 @@ async fn handle_incoming_cluster(
                 if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == node_id) {
                     device.connected = true;
                     device.reachable = true;
+                    device.last_seen = Some(Instant::now());
                     let should_replace_endpoint = (device.endpoint.is_none() && is_preferred_light_endpoint(&description))
                         || device.endpoint == Some(description.endpoint)
                         || (is_preferred_light_endpoint(&description)
@@ -1441,6 +1529,7 @@ async fn handle_incoming_cluster(
                     if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == node_id) {
                         device.connected = true;
                         device.reachable = true;
+                        device.last_seen = Some(Instant::now());
                         device.is_on = value != 0;
                     }
                 }
@@ -1454,6 +1543,7 @@ async fn handle_incoming_cluster(
                 if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == node_id) {
                     device.connected = true;
                     device.reachable = true;
+                    device.last_seen = Some(Instant::now());
                     if let Some(level) = payload.get(3).copied() {
                         device.brightness = ((u16::from(level) * 100) / 254) as u8;
                         device.is_on = level > 0;
@@ -1511,6 +1601,7 @@ fn parse_zcl_read_attributes_response(
         if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == node_id) {
             device.connected = true;
             device.reachable = true;
+            device.last_seen = Some(Instant::now());
             match (cluster_id, attribute_id) {
                 (ON_OFF_CLUSTER_ID, 0x0000) => {
                     if let Some(value) = value_bytes.first() {
@@ -1750,6 +1841,11 @@ async fn sync_status_devices(
             temperature: device.temperature,
             model: device.model.clone(),
             manufacturer: device.manufacturer.clone(),
+            last_seen: device.last_seen.map(|instant| {
+                let elapsed = instant.elapsed();
+                let wall_clock = Utc::now() - chrono::Duration::from_std(elapsed).unwrap_or_default();
+                wall_clock.to_rfc3339()
+            }),
         })
         .collect();
 }
@@ -1816,6 +1912,7 @@ fn seed_known_device(device: NativeKnownDevice) -> DiscoveredDevice {
         connected: false,
         reachable: false,
         interview_attempts: 0,
+        last_seen: None,
     }
 }
 
@@ -1933,6 +2030,7 @@ mod tests {
             connected: true,
             reachable: true,
             interview_attempts: 0,
+            last_seen: None,
         };
 
         assert!(!should_probe_active_endpoints(&base));
@@ -1966,6 +2064,7 @@ mod tests {
             connected: true,
             reachable: true,
             interview_attempts: 0,
+            last_seen: None,
         };
 
         assert!(!should_probe_active_endpoints(&known));
@@ -1991,6 +2090,7 @@ mod tests {
             connected: true,
             reachable: true,
             interview_attempts: 0,
+            last_seen: None,
         };
 
         device.supports_temperature = device.supports_temperature && device.has_color_control_cluster;
