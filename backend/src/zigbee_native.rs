@@ -32,7 +32,6 @@ const EZSP_CHANNEL_SIZE: usize = 64;
 const EZSP_INIT_TIMEOUT: StdDuration = StdDuration::from_secs(5);
 const POLL_INTERVAL: StdDuration = StdDuration::from_millis(200);
 const DISCOVERY_RETRY_INTERVAL_TICKS: u32 = 10;
-const STARTUP_DISCOVERY_TIMEOUT: StdDuration = StdDuration::from_millis(750);
 const ZDO_PROFILE_ID: u16 = 0x0000;
 const ZCL_GLOBAL_FRAME_CONTROL: u8 = 0x00;
 const ZCL_CLUSTER_COMMAND_FRAME_CONTROL: u8 = 0x11;
@@ -66,8 +65,6 @@ const ZIGBEE_ALLIANCE09_LINK_KEY: EmberKeyData = *b"ZigBeeAlliance09";
 const LIVENESS_PROBE_INTERVAL_TICKS: u32 = 150;
 /// Duration after which a device with no response is considered unreachable.
 const LIVENESS_TIMEOUT: StdDuration = StdDuration::from_secs(90);
-/// Timeout for individual liveness probe ZCL reads.
-const LIVENESS_PROBE_TIMEOUT: StdDuration = StdDuration::from_millis(750);
 
 #[derive(Debug, Clone)]
 pub enum NativeZigbeeCommand {
@@ -871,40 +868,25 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
             if targets.is_empty() {
                 debug!("native zigbee discovery skipped because no joined devices are known yet");
             }
+            // NOTE: we intentionally do NOT wrap these EZSP calls in a timeout.
+            // The EZSP UART protocol is strictly request-response: dropping a
+            // `communicate()` future mid-`receive()` (as `timeout()` does) orphans
+            // the NCP's response in the pipeline, permanently desynchronising all
+            // subsequent commands.  If the NCP is slow, we wait.
             for target in targets {
                 info!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, endpoint = ?target.endpoint, "probing known Zigbee device");
                 if should_probe_active_endpoints(&target) {
-                    match tokio::time::timeout(
-                        STARTUP_DISCOVERY_TIMEOUT,
-                        request_active_endpoints(context, target.node_id),
-                    )
-                    .await
-                    {
-                        Ok(Ok(())) => {}
-                        Ok(Err(error)) => {
+                    match request_active_endpoints(context, target.node_id).await {
+                        Ok(()) => {}
+                        Err(error) => {
                             warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, error = %error, "native zigbee active endpoint probe failed");
-                            continue;
-                        }
-                        Err(_) => {
-                            warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, timeout_ms = STARTUP_DISCOVERY_TIMEOUT.as_millis(), "native zigbee active endpoint probe timed out");
                             continue;
                         }
                     }
                 }
                 if target.endpoint.is_some() {
-                    match tokio::time::timeout(
-                        STARTUP_DISCOVERY_TIMEOUT,
-                        refresh_device_state(context, &target),
-                    )
-                    .await
-                    {
-                        Ok(Ok(())) => {}
-                        Ok(Err(error)) => {
-                            warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, error = %error, "native zigbee state refresh failed during discovery");
-                        }
-                        Err(_) => {
-                            warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, timeout_ms = STARTUP_DISCOVERY_TIMEOUT.as_millis(), "native zigbee state refresh timed out during discovery");
-                        }
+                    if let Err(error) = refresh_device_state(context, &target).await {
+                        warn!(node_id = format_args!("0x{:04x}", target.node_id), eui64 = %target.eui64, error = %error, "native zigbee state refresh failed during discovery");
                     }
                 }
             }
@@ -1268,6 +1250,7 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
 fn expire_unreachable_devices(context: &mut EzspContext) {
     let now = Instant::now();
     for device in &mut context.joined_devices {
+        // Only expire interviewed devices that are currently considered reachable.
         if !device.reachable || device.endpoint.is_none() {
             continue;
         }
@@ -1289,9 +1272,24 @@ fn expire_unreachable_devices(context: &mut EzspContext) {
 }
 
 /// Send a lightweight ZCL Read Attributes probe (On/Off attribute 0x0000) to all
-/// reachable, interviewed devices. The response will be handled asynchronously via
-/// [`handle_incoming_cluster`] which updates `last_seen` and `reachable`.
+/// interviewed devices that have the On/Off cluster — regardless of their current
+/// `reachable` status, so that devices which come back online can be rediscovered.
+///
+/// **IMPORTANT**: probes are sent without any per-send timeout.  The EZSP UART protocol
+/// is strictly request–response: `communicate()` calls `send()` then `receive()`.
+/// If a `timeout()` fires while `receive()` is waiting, the future is dropped but the
+/// NCP still delivers the response later.  That orphaned response permanently desynchronises
+/// the EZSP pipeline, making every subsequent command hang.  Instead we let each
+/// `send_unicast` take as long as the NCP needs; reachability is determined by
+/// [`expire_unreachable_devices`] using the `last_seen` timestamp.
+///
+/// The ZCL response will be handled asynchronously via [`handle_incoming_cluster`] which
+/// updates `last_seen` and `reachable`.
 async fn run_liveness_probes(context: &mut EzspContext) {
+    // Drain any callbacks that arrived since the last tick so that responses
+    // from a previous probe cycle can update `last_seen` before we send new probes.
+    drain_pending_callbacks(context).await;
+
     let targets: Vec<(u16, u8)> = context
         .joined_devices
         .iter()
@@ -1301,33 +1299,33 @@ async fn run_liveness_probes(context: &mut EzspContext) {
         .collect();
 
     for (node_id, endpoint) in targets {
-        let result = timeout(
-            LIVENESS_PROBE_TIMEOUT,
-            send_read_attributes(context, node_id, endpoint, ON_OFF_CLUSTER_ID, &[0x0000]),
-        )
-        .await;
-
-        match result {
-            Ok(Ok(())) => {
+        match send_read_attributes(context, node_id, endpoint, ON_OFF_CLUSTER_ID, &[0x0000]).await {
+            Ok(()) => {
                 debug!(
                     node_id = format_args!("0x{node_id:04x}"),
                     "liveness probe sent"
                 );
             }
-            Ok(Err(error)) => {
+            Err(error) => {
                 warn!(
                     node_id = format_args!("0x{node_id:04x}"),
                     error = %error,
                     "liveness probe send failed"
                 );
             }
-            Err(_) => {
-                warn!(
-                    node_id = format_args!("0x{node_id:04x}"),
-                    "liveness probe send timed out"
-                );
-            }
         }
+
+        // Drain callbacks between probes so that responses update `last_seen`
+        // promptly and don't pile up in the channel.
+        drain_pending_callbacks(context).await;
+    }
+}
+
+/// Drain all currently-queued callbacks without waiting,
+/// so that pending ZCL responses can update device state immediately.
+async fn drain_pending_callbacks(context: &mut EzspContext) {
+    while let Ok(callback) = context.callbacks_rx.try_recv() {
+        handle_callback(context, callback).await;
     }
 }
 
