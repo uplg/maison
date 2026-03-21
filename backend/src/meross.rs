@@ -341,7 +341,28 @@ impl MerossManager {
 
     pub async fn get_status(&self, device_id: &str) -> Result<(MerossDeviceRef, MerossStatus), AppError> {
         let device = self.get_device(device_id)?;
-        let system = self.get_system_all(device).await?;
+        let system = match self.get_system_all(device).await {
+            Ok(system) => system,
+            Err(error) => {
+                tracing::warn!(
+                    device = %device.config.name,
+                    ip = %device.config.ip,
+                    error = %error,
+                    "meross device unreachable, returning cached offline status"
+                );
+                let cached = device.state.read().await;
+                let status = MerossStatus {
+                    online: false,
+                    on: cached.is_on,
+                    electricity: None,
+                    hardware: None,
+                    firmware: None,
+                    wifi: MerossWifi { signal: None },
+                    last_update: cached.last_ping,
+                };
+                return Ok((MerossDeviceRef::from(&device.config), status));
+            }
+        };
         let electricity = self.get_electricity_raw(device).await.ok().map(|raw| MerossStatusElectricity {
             voltage: f64::from(raw.voltage) / 10.0,
             current: f64::from(raw.current) / 1000.0,
@@ -548,7 +569,10 @@ impl MerossManager {
             Err(error) => {
                 let mut state = device.state.write().await;
                 state.is_online = false;
-                return Err(AppError::Reqwest(error));
+                return Err(AppError::service_unavailable(format!(
+                    "Meross device {} ({}) is unreachable: {error}",
+                    device.config.name, device.config.ip
+                )));
             }
         };
 
@@ -590,7 +614,10 @@ impl MerossManager {
             Err(error) => {
                 let mut state = device.state.write().await;
                 state.is_online = false;
-                return Err(AppError::Reqwest(error));
+                return Err(AppError::service_unavailable(format!(
+                    "Meross device {} ({}) is unreachable: {error}",
+                    device.config.name, device.config.ip
+                )));
             }
         };
 

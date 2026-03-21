@@ -324,7 +324,7 @@ impl NativeZigbeeRuntime {
 
 struct EzspContext {
     uart: EzspUart,
-    callbacks_rx: mpsc::Receiver<Callback>,
+    callbacks_rx: mpsc::UnboundedReceiver<Callback>,
     joined_devices: Vec<DiscoveredDevice>,
     next_global_sequence: u8,
     next_device_sequence: HashMap<u16, u8>,
@@ -555,7 +555,7 @@ async fn try_open_ezsp_context(
         )))?;
 
     let (payload_tx, payload_rx) = mpsc::channel::<Payload>(EZSP_CHANNEL_SIZE);
-    let (callback_tx, callback_rx) = mpsc::channel::<Callback>(EZSP_CHANNEL_SIZE);
+    let (callback_tx, callback_rx) = mpsc::unbounded_channel::<Callback>();
     let actor = AshActor::new(serial, payload_tx, EZSP_CHANNEL_SIZE)
         .map_err(|error| AppError::service_unavailable(format!(
             "Unable to create ASH actor for {serial_port} in {mode_label} mode: {error}"

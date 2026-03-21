@@ -1,7 +1,7 @@
 use axum::{http::StatusCode, response::IntoResponse, Json};
 use serde::Serialize;
 use thiserror::Error;
-use tracing::error;
+use tracing::{error, warn};
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -64,7 +64,9 @@ impl AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         let status = self.status();
-        if status.is_server_error() {
+        if status == StatusCode::SERVICE_UNAVAILABLE {
+            warn!(error = %self, "upstream device unavailable");
+        } else if status.is_server_error() {
             error!(error = %self, "request failed");
         }
         let body = ErrorBody {
