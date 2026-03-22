@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration as StdDuration};
 
-use ashv2::{Actor as AshActor, BaudRate, FlowControl, Payload, open as open_ash_serial};
+use ashv2::{Actor as AshActor, BaudRate, FlowControl, NativeSerialPort, Payload, Tasks as AshTasks, open as open_ash_serial};
 use chrono::Utc;
 use ezsp::{
     Callback, Configuration, Ezsp, Messaging, Networking, Security, Utilities,
@@ -23,7 +23,7 @@ use tokio::{
     task::JoinHandle,
     time::{Instant, MissedTickBehavior, interval, timeout},
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::error::AppError;
 
@@ -65,6 +65,22 @@ const ZIGBEE_ALLIANCE09_LINK_KEY: EmberKeyData = *b"ZigBeeAlliance09";
 const LIVENESS_PROBE_INTERVAL_TICKS: u32 = 150;
 /// Duration after which a device with no response is considered unreachable.
 const LIVENESS_TIMEOUT: StdDuration = StdDuration::from_secs(90);
+
+/// Duration after which the EZSP pipeline is considered stuck if no EZSP activity
+/// (successful command or callback) has been observed.  Triggers a full reconnect.
+const WATCHDOG_TIMEOUT: StdDuration = StdDuration::from_secs(180);
+
+/// Per-EZSP-command timeout.  If a single `send_unicast` / `communicate` call takes
+/// longer than this, we assume the pipeline is dead and trigger a full reconnect.
+/// This is safe ONLY because we tear down the entire pipeline afterward — we never
+/// reuse a desynchronised EZSP channel.
+const EZSP_COMMAND_TIMEOUT: StdDuration = StdDuration::from_secs(15);
+
+/// Delay before attempting to reconnect after a pipeline failure.
+const RECONNECT_DELAY: StdDuration = StdDuration::from_secs(2);
+
+/// Maximum number of consecutive reconnect attempts before giving up.
+const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 
 #[derive(Debug, Clone)]
 pub enum NativeZigbeeCommand {
@@ -324,10 +340,14 @@ impl NativeZigbeeRuntime {
 
 struct EzspContext {
     uart: EzspUart,
+    ash_tasks: AshTasks<NativeSerialPort>,
     callbacks_rx: mpsc::UnboundedReceiver<Callback>,
     joined_devices: Vec<DiscoveredDevice>,
     next_global_sequence: u8,
     next_device_sequence: HashMap<u16, u8>,
+    /// Updated on every successful EZSP command or callback.  Used by the watchdog
+    /// to detect a silently-dead pipeline.
+    last_activity: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -389,126 +409,284 @@ async fn run_native_driver(
         return;
     };
 
-    let context_result = match adapter.as_str() {
-        "ember" => open_ezsp_context(&serial_port).await,
-        other => Err(AppError::service_unavailable(format!(
-            "Unsupported native Zigbee adapter: {other}"
-        ))),
-    };
+    let seed_devices: Vec<DiscoveredDevice> = known_devices.into_iter().map(seed_known_device).collect();
 
-    let mut context = match context_result {
-        Ok(context) => context,
-        Err(error) => {
-            warn!(adapter = %adapter, serial_port = %serial_port, error = %error, "failed to open native zigbee adapter");
-            set_status(
-                &status,
-                false,
-                Some(format!("Failed to open native Zigbee adapter {adapter} on {serial_port}")),
-                Some(error.to_string()),
-            )
-            .await;
-            *lifecycle.write().await = DriverLifecycle::Failed(error.to_string());
-            drain_pending_requests(&mut command_rx, error).await;
-            return;
-        }
-    };
+    // ---- Outer reconnect loop ----
+    // On the first iteration `saved_devices` comes from the config.
+    // On subsequent iterations it comes from the old context's device list
+    // (which includes runtime-discovered state, desired brightness, etc.).
+    let mut saved_devices = seed_devices;
+    let mut reconnect_attempts: u32 = 0;
 
-    context.joined_devices = known_devices.into_iter().map(seed_known_device).collect();
+    'reconnect: loop {
+        // --- Open EZSP context ---
+        let context_result = match adapter.as_str() {
+            "ember" => open_ezsp_context(&serial_port).await,
+            other => Err(AppError::service_unavailable(format!(
+                "Unsupported native Zigbee adapter: {other}"
+            ))),
+        };
 
-    let network_state = match ensure_coordinator_network(&mut context, &serial_port).await {
-        Ok(state) => state,
-        Err(error) => {
-            warn!(serial_port = %serial_port, error = %error, "failed to initialize native zigbee network");
-            set_status(
-                &status,
-                false,
-                Some(format!("Failed to initialize native Zigbee network on {serial_port}")),
-                Some(error.to_string()),
-            )
-            .await;
-            *lifecycle.write().await = DriverLifecycle::Failed(error.to_string());
-            drain_pending_requests(&mut command_rx, error).await;
-            return;
-        }
-    };
-
-    *driver_network_state.write().await = ember_network_state_to_driver_state(network_state);
-
-    *lifecycle.write().await = DriverLifecycle::Ready;
-    set_status(
-        &status,
-        true,
-        Some(format!("Native Zigbee connected on {serial_port} with network state {}", network_state_label(network_state))),
-        None,
-    )
-    .await;
-
-    info!(adapter = %adapter, serial_port = %serial_port, "native zigbee ezsp stack initialized");
-
-    let mut tick = interval(POLL_INTERVAL);
-    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    let mut tick_count: u32 = 0;
-
-    loop {
-        tokio::select! {
-            maybe_request = command_rx.recv() => {
-                let Some(request) = maybe_request else {
-                    break;
-                };
-                let result = handle_command(&mut context, request.command).await;
-                if let Err(error) = &result {
-                    warn!(serial_port = %serial_port, error = %error, "native zigbee command failed");
-                } else {
-                    sync_status_devices(&status, &context.joined_devices).await;
+        let mut context = match context_result {
+            Ok(context) => context,
+            Err(error) => {
+                reconnect_attempts += 1;
+                if reconnect_attempts > MAX_RECONNECT_ATTEMPTS {
+                    error!(
+                        adapter = %adapter,
+                        serial_port = %serial_port,
+                        attempts = reconnect_attempts,
+                        error = %error,
+                        "exhausted reconnect attempts — giving up"
+                    );
+                    set_status(
+                        &status,
+                        false,
+                        Some(format!("Failed to open native Zigbee adapter {adapter} on {serial_port}")),
+                        Some(error.to_string()),
+                    )
+                    .await;
+                    *lifecycle.write().await = DriverLifecycle::Failed(error.to_string());
+                    drain_pending_requests(&mut command_rx, error).await;
+                    return;
                 }
-                if let Err(error) = request.reply_tx.send(result) {
-                    warn!(error = ?error, "native zigbee command response receiver dropped");
-                }
+                warn!(
+                    adapter = %adapter,
+                    serial_port = %serial_port,
+                    attempt = reconnect_attempts,
+                    error = %error,
+                    "failed to open EZSP context — retrying in {:?}",
+                    RECONNECT_DELAY,
+                );
+                set_status(
+                    &status,
+                    false,
+                    Some(format!("Reconnecting native Zigbee on {serial_port} (attempt {reconnect_attempts})")),
+                    Some(error.to_string()),
+                )
+                .await;
+                tokio::time::sleep(RECONNECT_DELAY).await;
+                continue 'reconnect;
             }
-            _ = tick.tick() => {
-                tick_count = tick_count.wrapping_add(1);
-                while let Ok(callback) = context.callbacks_rx.try_recv() {
-                    if let Some(event) = handle_callback(&mut context, callback).await {
-                        debug!(event = ?event, "native zigbee callback handled");
-                        match event {
-                            NativeZigbeeEvent::TransportReady => {
-                                set_status(&status, true, Some(format!("Native Zigbee transport connected on {serial_port} ({adapter})")), None).await;
-                            }
-                            NativeZigbeeEvent::NetworkState { status: network_status } => {
-                                *driver_network_state.write().await = match network_status.as_str() {
-                                    "joined" => DriverNetworkState::Joined,
-                                    "no-network" => DriverNetworkState::NoNetwork,
-                                    _ => DriverNetworkState::Unknown,
-                                };
-                                set_status(&status, true, Some(format!("Native Zigbee network state: {network_status}")), None).await;
-                            }
-                            NativeZigbeeEvent::DeviceJoined { node_id, eui64 } => {
-                                set_status(&status, true, Some(format!("Native Zigbee device joined: {eui64} ({node_id:#06x})")), None).await;
-                                sync_status_devices(&status, &context.joined_devices).await;
-                            }
-                            NativeZigbeeEvent::DeviceAnnounced { node_id, eui64 } => {
-                                set_status(&status, true, Some(format!("Native Zigbee device announced: {eui64} ({node_id:#06x})")), None).await;
-                                sync_status_devices(&status, &context.joined_devices).await;
-                            }
-                            NativeZigbeeEvent::IncomingMessage { node_id, cluster_id, payload } => {
-                                debug!(node_id, cluster_id, payload = %hex_bytes(&payload), "native zigbee incoming message");
+        };
+
+        context.joined_devices = saved_devices.clone();
+
+        let network_state = match ensure_coordinator_network(&mut context, &serial_port).await {
+            Ok(state) => state,
+            Err(error) => {
+                reconnect_attempts += 1;
+                if reconnect_attempts > MAX_RECONNECT_ATTEMPTS {
+                    error!(
+                        serial_port = %serial_port,
+                        attempts = reconnect_attempts,
+                        error = %error,
+                        "exhausted reconnect attempts during network init — giving up"
+                    );
+                    set_status(
+                        &status,
+                        false,
+                        Some(format!("Failed to initialize native Zigbee network on {serial_port}")),
+                        Some(error.to_string()),
+                    )
+                    .await;
+                    *lifecycle.write().await = DriverLifecycle::Failed(error.to_string());
+                    drain_pending_requests(&mut command_rx, error).await;
+                    return;
+                }
+                warn!(
+                    serial_port = %serial_port,
+                    attempt = reconnect_attempts,
+                    error = %error,
+                    "network init failed — tearing down and retrying"
+                );
+                teardown_context(context).await;
+                tokio::time::sleep(RECONNECT_DELAY).await;
+                continue 'reconnect;
+            }
+        };
+
+        // Successful init — reset reconnect counter.
+        reconnect_attempts = 0;
+
+        *driver_network_state.write().await = ember_network_state_to_driver_state(network_state);
+        *lifecycle.write().await = DriverLifecycle::Ready;
+        set_status(
+            &status,
+            true,
+            Some(format!(
+                "Native Zigbee connected on {serial_port} with network state {}",
+                network_state_label(network_state)
+            )),
+            None,
+        )
+        .await;
+
+        info!(adapter = %adapter, serial_port = %serial_port, "native zigbee EZSP stack initialized");
+
+        // ---- Inner event loop ----
+        let mut tick = interval(POLL_INTERVAL);
+        tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut tick_count: u32 = 0;
+
+        let reconnect_reason: Option<String> = 'event_loop: loop {
+            tokio::select! {
+                maybe_request = command_rx.recv() => {
+                    let Some(request) = maybe_request else {
+                        // Channel closed — clean shutdown.
+                        teardown_context(context).await;
+                        return;
+                    };
+
+                    // Wrap the command in a timeout.  If it fires, the EZSP
+                    // pipeline is assumed dead — we tear everything down and
+                    // reconnect.  This is safe because we never reuse the
+                    // pipeline after a timeout.
+                    let result = match timeout(EZSP_COMMAND_TIMEOUT, handle_command(&mut context, request.command)).await {
+                        Ok(inner_result) => inner_result,
+                        Err(_elapsed) => {
+                            error!(
+                                serial_port = %serial_port,
+                                "EZSP command timed out after {:?} — triggering reconnect",
+                                EZSP_COMMAND_TIMEOUT,
+                            );
+                            let _ = request.reply_tx.send(Err(AppError::service_unavailable(
+                                "EZSP command timed out — reconnecting pipeline",
+                            )));
+                            break 'event_loop Some(format!(
+                                "EZSP command timed out after {:?}",
+                                EZSP_COMMAND_TIMEOUT,
+                            ));
+                        }
+                    };
+
+                    match &result {
+                        Ok(()) => {
+                            context.last_activity = Instant::now();
+                            sync_status_devices(&status, &context.joined_devices).await;
+                        }
+                        Err(error) => {
+                            warn!(serial_port = %serial_port, error = %error, "native zigbee command failed");
+                        }
+                    }
+                    if let Err(error) = request.reply_tx.send(result) {
+                        warn!(error = ?error, "native zigbee command response receiver dropped");
+                    }
+                }
+                _ = tick.tick() => {
+                    tick_count = tick_count.wrapping_add(1);
+
+                    // --- Health check: ASH tasks alive? ---
+                    if let Some(reason) = check_pipeline_health(&context) {
+                        break 'event_loop Some(reason.to_string());
+                    }
+
+                    // --- Drain callbacks ---
+                    while let Ok(callback) = context.callbacks_rx.try_recv() {
+                        context.last_activity = Instant::now();
+                        if let Some(event) = handle_callback(&mut context, callback).await {
+                            debug!(event = ?event, "native zigbee callback handled");
+                            match event {
+                                NativeZigbeeEvent::TransportReady => {
+                                    set_status(&status, true, Some(format!("Native Zigbee transport connected on {serial_port} ({adapter})")), None).await;
+                                }
+                                NativeZigbeeEvent::NetworkState { status: network_status } => {
+                                    *driver_network_state.write().await = match network_status.as_str() {
+                                        "joined" => DriverNetworkState::Joined,
+                                        "no-network" => DriverNetworkState::NoNetwork,
+                                        _ => DriverNetworkState::Unknown,
+                                    };
+                                    set_status(&status, true, Some(format!("Native Zigbee network state: {network_status}")), None).await;
+                                }
+                                NativeZigbeeEvent::DeviceJoined { node_id, eui64 } => {
+                                    set_status(&status, true, Some(format!("Native Zigbee device joined: {eui64} ({node_id:#06x})")), None).await;
+                                    sync_status_devices(&status, &context.joined_devices).await;
+                                }
+                                NativeZigbeeEvent::DeviceAnnounced { node_id, eui64 } => {
+                                    set_status(&status, true, Some(format!("Native Zigbee device announced: {eui64} ({node_id:#06x})")), None).await;
+                                    sync_status_devices(&status, &context.joined_devices).await;
+                                }
+                                NativeZigbeeEvent::IncomingMessage { node_id, cluster_id, payload } => {
+                                    debug!(node_id, cluster_id, payload = %hex_bytes(&payload), "native zigbee incoming message");
+                                }
                             }
                         }
                     }
-                }
 
-                if tick_count % DISCOVERY_RETRY_INTERVAL_TICKS == 0 {
-                    retry_pending_interviews(&mut context).await;
-                    sync_status_devices(&status, &context.joined_devices).await;
-                }
+                    if tick_count % DISCOVERY_RETRY_INTERVAL_TICKS == 0 {
+                        // Wrap interview retries in a timeout — a hung send_unicast here
+                        // would block the entire event loop.
+                        if timeout(EZSP_COMMAND_TIMEOUT, retry_pending_interviews(&mut context)).await.is_err() {
+                            break 'event_loop Some("interview retry timed out".to_string());
+                        }
+                        sync_status_devices(&status, &context.joined_devices).await;
+                    }
 
-                if tick_count % LIVENESS_PROBE_INTERVAL_TICKS == 0 {
-                    expire_unreachable_devices(&mut context);
-                    run_liveness_probes(&mut context).await;
-                    restore_desired_state(&mut context).await;
-                    sync_status_devices(&status, &context.joined_devices).await;
+                    if tick_count % LIVENESS_PROBE_INTERVAL_TICKS == 0 {
+                        expire_unreachable_devices(&mut context);
+                        // Wrap liveness probes + restore in a generous timeout.
+                        // Multiple send_unicast calls happen here (one per device),
+                        // so we allow more time than a single command.
+                        let probe_timeout = EZSP_COMMAND_TIMEOUT * context.joined_devices.len().max(1) as u32;
+                        if timeout(probe_timeout, async {
+                            run_liveness_probes(&mut context).await;
+                            restore_desired_state(&mut context).await;
+                        }).await.is_err() {
+                            break 'event_loop Some("liveness probe cycle timed out".to_string());
+                        }
+                        sync_status_devices(&status, &context.joined_devices).await;
+                    }
                 }
             }
+        };
+
+        // --- Reconnect path ---
+        if let Some(reason) = reconnect_reason {
+            saved_devices = context.joined_devices.clone();
+            reconnect_attempts += 1;
+
+            if reconnect_attempts > MAX_RECONNECT_ATTEMPTS {
+                error!(
+                    serial_port = %serial_port,
+                    reason = %reason,
+                    attempts = reconnect_attempts,
+                    "exhausted reconnect attempts — giving up"
+                );
+                teardown_context(context).await;
+                *lifecycle.write().await = DriverLifecycle::Failed(format!("Pipeline died: {reason}"));
+                set_status(
+                    &status,
+                    false,
+                    Some(format!("Native Zigbee pipeline died on {serial_port}: {reason}")),
+                    Some(reason),
+                )
+                .await;
+                drain_pending_requests(
+                    &mut command_rx,
+                    AppError::service_unavailable("EZSP pipeline died and reconnect attempts exhausted"),
+                )
+                .await;
+                return;
+            }
+
+            warn!(
+                serial_port = %serial_port,
+                reason = %reason,
+                attempt = reconnect_attempts,
+                "EZSP pipeline unhealthy — tearing down and reconnecting"
+            );
+            set_status(
+                &status,
+                false,
+                Some(format!("Reconnecting native Zigbee on {serial_port}: {reason} (attempt {reconnect_attempts})")),
+                Some(reason),
+            )
+            .await;
+            *lifecycle.write().await = DriverLifecycle::Starting;
+
+            teardown_context(context).await;
+            tokio::time::sleep(RECONNECT_DELAY).await;
+            // continue 'reconnect — the outer loop re-opens the context
         }
     }
 }
@@ -554,14 +732,13 @@ async fn try_open_ezsp_context(
             "Unable to open Zigbee serial port {serial_port} in {mode_label} mode: {error}"
         )))?;
 
-    let (payload_tx, payload_rx) = mpsc::channel::<Payload>(EZSP_CHANNEL_SIZE);
+    let (payload_tx, payload_rx) = mpsc::unbounded_channel::<Payload>();
     let (callback_tx, callback_rx) = mpsc::unbounded_channel::<Callback>();
     let actor = AshActor::new(serial, payload_tx, EZSP_CHANNEL_SIZE)
         .map_err(|error| AppError::service_unavailable(format!(
             "Unable to create ASH actor for {serial_port} in {mode_label} mode: {error}"
         )))?;
     let (tasks, proxy) = actor.spawn();
-    let _ = tasks;
 
     let mut uart = EzspUart::new(proxy, payload_rx, callback_tx, protocol_version, EZSP_CHANNEL_SIZE);
     info!(serial_port = %serial_port, mode = %mode_label, protocol_version, "initializing EZSP UART");
@@ -578,10 +755,12 @@ async fn try_open_ezsp_context(
 
     Ok(EzspContext {
         uart,
+        ash_tasks: tasks,
         callbacks_rx: callback_rx,
         joined_devices: Vec::new(),
         next_global_sequence: 1,
         next_device_sequence: HashMap::new(),
+        last_activity: Instant::now(),
     })
 }
 
@@ -646,6 +825,32 @@ async fn ensure_coordinator_network(
     log_network_parameters(context, serial_port).await?;
 
     Ok(state)
+}
+
+/// Gracefully tear down the EZSP pipeline.  Aborts the EZSP splitter task and
+/// terminates the ASH transmitter/receiver tasks.  This ensures no orphaned
+/// background tasks leak when we reconnect.
+async fn teardown_context(context: EzspContext) {
+    info!("tearing down EZSP pipeline");
+    // First abort the EZSP splitter (consumes uart).
+    context.uart.abort().await;
+    // Then terminate ASH actor tasks (transmitter + receiver).
+    if let Err(error) = context.ash_tasks.terminate().await {
+        warn!(error = ?error, "ASH tasks termination returned an error (non-fatal)");
+    }
+    info!("EZSP pipeline torn down");
+}
+
+/// Check whether the EZSP pipeline is healthy.  Returns a human-readable reason
+/// if the pipeline should be torn down and rebuilt.
+fn check_pipeline_health(context: &EzspContext) -> Option<&'static str> {
+    if !context.ash_tasks.is_alive() {
+        return Some("ASH transport task(s) died");
+    }
+    if context.last_activity.elapsed() > WATCHDOG_TIMEOUT {
+        return Some("EZSP watchdog timeout — no activity");
+    }
+    None
 }
 
 async fn configure_local_endpoint(context: &mut EzspContext) -> Result<(), AppError> {

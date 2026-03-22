@@ -129,7 +129,7 @@ async fn probe_once(
     let serial = open_ash_serial(serial_port, baud_rate, flow_control)
         .map_err(|error| format!("open serial failed ({label}): {error}"))?;
 
-    let (payload_tx, payload_rx) = mpsc::channel::<Payload>(CHANNEL_SIZE);
+    let (payload_tx, payload_rx) = mpsc::unbounded_channel::<Payload>();
     let (callback_tx, _callback_rx) = mpsc::unbounded_channel();
 
     println!("  creating ASH actor");
