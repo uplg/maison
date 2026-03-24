@@ -1429,14 +1429,23 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
         .iter_mut()
         .find(|device| device.eui64 == eui64 || device.node_id == node_id)
     {
+        let was_reachable = device.reachable;
         device.node_id = node_id;
         device.eui64 = eui64;
         device.connected = true;
         device.reachable = true;
         device.last_seen = Some(Instant::now());
-        device.is_on = true;
-        if device.brightness == 0 {
-            device.brightness = 100;
+        if was_reachable {
+            // The device was already reachable — this is an adapter self-healing
+            // reconnect, not a physical power cycle.  Keep the previous is_on state
+            // so that lamps that were off stay off.
+        } else {
+            // The device was unreachable (wall-switch / physical power cycle) —
+            // the lamp has physically powered back on, so reflect that.
+            device.is_on = true;
+            if device.brightness == 0 {
+                device.brightness = 100;
+            }
         }
         if device.endpoint.is_none() {
             device.interview_attempts = 0;
@@ -1560,8 +1569,9 @@ async fn drain_pending_callbacks(context: &mut EzspContext) {
 /// then turns it back on.  The lamp powers up at factory defaults, so we push the last
 /// user-set brightness and temperature to it.
 ///
-/// The lamp is intentionally forced ON when it reappears (handled elsewhere via
-/// `ensure_joined_device`), so we do **not** touch the on/off state here.
+/// The lamp is intentionally forced ON when it reappears after a wall-switch (handled
+/// elsewhere via `ensure_joined_device` when the device was previously unreachable),
+/// so we do **not** touch the on/off state here.
 ///
 /// **IMPORTANT**: no `timeout()` wrapper — see [`run_liveness_probes`] doc comment.
 async fn restore_desired_state(context: &mut EzspContext) {
