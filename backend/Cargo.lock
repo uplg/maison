@@ -425,6 +425,7 @@ dependencies = [
  "dotenvy",
  "ezsp",
  "futures",
+ "heapless",
  "jsonwebtoken",
  "md5",
  "rbroadlink",

@@ -15,7 +15,7 @@ use ezsp::{
         node::Type as EmberNodeType,
         security::initial,
     },
-    ezsp::{config, decision, network::InitBitmask as NetworkInitBitmask, policy},
+    ezsp::{config, decision, network::InitBitmask as NetworkInitBitmask, policy, value},
     parameters,
     uart::Uart as EzspUart,
 };
@@ -861,7 +861,7 @@ async fn ensure_coordinator_network(
         state = wait_for_network_ready(context).await?;
     } else {
         // The network already exists — try to refresh the security state so that
-        // any policy changes (e.g. removing REQUIRE_ENCRYPTED_KEY) take effect.
+        // any flag changes take effect on the next join cycle.
         // This may fail with EmberInvalidCall on some firmware (security state
         // can only be set before the network is up) — that's OK, the runtime
         // policies set in configure_stack() are the ones that matter for join
@@ -1007,6 +1007,38 @@ async fn configure_stack(context: &mut EzspContext) -> Result<(), AppError> {
         .await
         .map_err(map_ezsp_error("set TC well-known key rejoin timeout"))?;
 
+    // Deny application key requests (matches Z2M: DENY_APP_KEY_REQUESTS).
+    // Application link keys between devices are not needed for our use case.
+    context
+        .uart
+        .set_policy(
+            policy::Id::AppKeyRequest,
+            u8::from(decision::Id::DenyAppKeyRequests),
+        )
+        .await
+        .map_err(map_ezsp_error("set app key request policy (deny)"))?;
+
+    // Set the transient key timeout to 300 seconds (5 minutes), matching Z2M.
+    // This controls how long the NCP keeps a transient key entry before expiring it.
+    let timeout_bytes: heapless::Vec<u8, 255> = [0x2C, 0x01].into_iter().collect(); // 300 in LE u16
+    context
+        .uart
+        .set_value(value::Id::TransientKeyTimeoutSec, timeout_bytes)
+        .await
+        .map_err(map_ezsp_error("set transient key timeout"))?;
+
+    // Set extended security bitmask: JOINER_GLOBAL_LINK_KEY (0x0010) |
+    // NWK_LEAVE_REQUEST_NOT_ALLOWED (0x0100) = 0x0110, matching Z2M.
+    // - JOINER_GLOBAL_LINK_KEY: joiners use the global link key.
+    // - NWK_LEAVE_REQUEST_NOT_ALLOWED: prevent rogue devices from forcing
+    //   others off the network via NWK leave requests.
+    let extended_bitmask: heapless::Vec<u8, 255> = [0x10, 0x01].into_iter().collect(); // 0x0110 in LE u16
+    context
+        .uart
+        .set_value(value::Id::ExtendedSecurityBitmask, extended_bitmask)
+        .await
+        .map_err(map_ezsp_error("set extended security bitmask"))?;
+
     context
         .uart
         .set_policy(
@@ -1113,9 +1145,21 @@ async fn wait_for_network_ready(context: &mut EzspContext) -> Result<EmberNetwor
 }
 
 fn build_initial_security_state() -> initial::State {
+    // Matches Z2M's Ember adapter initial security state:
+    //   TRUST_CENTER_GLOBAL_LINK_KEY | HAVE_PRECONFIGURED_KEY | HAVE_NETWORK_KEY
+    //   | TRUST_CENTER_USES_HASHED_LINK_KEY | REQUIRE_ENCRYPTED_KEY
+    //
+    // REQUIRE_ENCRYPTED_KEY tells the NCP to only deliver the network key to
+    // joiners that can prove they possess the link key (via the transient key
+    // imported at permit-join time).  Without it, the NCP might send the
+    // network key in the clear to devices that don't have a link key.
+    //
+    // TRUST_CENTER_USES_HASHED_LINK_KEY tells the NCP the preconfigured key is
+    // a "hashed" global link key (the well-known ZigBeeAlliance09).
     initial::State::new(
         initial::Bitmask::TRUST_CENTER_GLOBAL_LINK_KEY
             | initial::Bitmask::HAVE_PRECONFIGURED_KEY
+            | initial::Bitmask::HAVE_NETWORK_KEY
             | initial::Bitmask::TRUST_CENTER_USES_HASHED_LINK_KEY
             | initial::Bitmask::REQUIRE_ENCRYPTED_KEY,
         ZIGBEE_ALLIANCE09_LINK_KEY,
@@ -1191,12 +1235,9 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
         NativeZigbeeCommand::PermitJoin { seconds } => {
             if seconds > 0 {
                 // Import the well-known "ZigBeeAlliance09" link key into the transient
-                // key table with a wildcard EUI64 (all zeros) BEFORE opening the network.
-                // This tells the NCP: "any new device joining with this key can use it to
-                // encrypt the network key transport."  Without this, REQUIRE_ENCRYPTED_KEY
-                // (baked into the NCP tokens at network formation) would prevent the NCP
-                // from delivering the network key to new devices.
-                // This is the same mechanism used by Zigbee2MQTT's Ember adapter.
+                // key table with a wildcard EUI64 (all 0xFF) BEFORE opening the network.
+                // This tells the NCP: "any new device joining can use this key to
+                // decrypt the network key transport."
                 // Wildcard EUI64 = all 0xFF — matches ANY joining device.
                 // Z2M uses 0xFFFFFFFFFFFFFFFF; all-zeros does NOT work as a wildcard.
                 let blank_eui64 = Eui64::new(0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF);
