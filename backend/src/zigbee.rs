@@ -24,7 +24,7 @@ use tracing::{debug, info, warn};
 use crate::{
     config::Config,
     error::AppError,
-    zigbee_native::{NativeKnownDevice, NativeZigbeeCommand, NativeZigbeeRuntime},
+    zigbee_native::{NativeKnownDevice, NativeZigbeeCommand, NativeZigbeeRuntime, ZigbeeDeviceType},
 };
 
 const MQTT_RECONNECT_DELAY: Duration = Duration::from_secs(5);
@@ -108,6 +108,8 @@ struct StoredZigbeeLampConfig {
     supports_temperature: bool,
     color_temp_min: Option<u16>,
     color_temp_max: Option<u16>,
+    #[serde(default)]
+    is_remote: bool,
 }
 
 #[derive(Clone)]
@@ -702,6 +704,7 @@ impl ZigbeeManager {
                     supports_temperature: discovered.supports_temperature,
                     color_temp_min: discovered.color_temp_min,
                     color_temp_max: discovered.color_temp_max,
+                    is_remote: false,
                 },
                 state: RuntimeLampState {
                     is_on: false,
@@ -1007,6 +1010,11 @@ impl NativeZigbeeManager {
                     manufacturer: lamp.config.manufacturer.clone(),
                     supports_brightness: lamp.config.supports_brightness,
                     supports_temperature: lamp.config.supports_temperature,
+                    device_type: if lamp.config.is_remote {
+                        ZigbeeDeviceType::Remote
+                    } else {
+                        ZigbeeDeviceType::Lamp
+                    },
                 })
             })
             .collect();
@@ -1033,7 +1041,11 @@ impl NativeZigbeeManager {
             warn!(error = %error, "failed to sync native zigbee lamps before listing");
         }
         let lamps = self.inner.lamps.read().await;
-        let mut values = lamps.values().map(to_view).collect::<Vec<_>>();
+        let mut values = lamps
+            .values()
+            .filter(|lamp| !lamp.config.is_remote && lamp.interview_completed)
+            .map(to_view)
+            .collect::<Vec<_>>();
         values.sort_by(|left, right| left.name.cmp(&right.name));
         values
     }
@@ -1052,9 +1064,9 @@ impl NativeZigbeeManager {
         }
         let lamps = self.inner.lamps.read().await;
         ZigbeeStats {
-            total: lamps.len(),
-            connected: lamps.values().filter(|lamp| lamp.connected).count(),
-            reachable: lamps.values().filter(|lamp| lamp.reachable).count(),
+            total: lamps.values().filter(|lamp| !lamp.config.is_remote && lamp.interview_completed).count(),
+            connected: lamps.values().filter(|lamp| !lamp.config.is_remote && lamp.interview_completed && lamp.connected).count(),
+            reachable: lamps.values().filter(|lamp| !lamp.config.is_remote && lamp.interview_completed && lamp.reachable).count(),
             disabled: false,
             message: self.inner.runtime.message().await,
         }
@@ -1204,6 +1216,15 @@ impl NativeZigbeeManager {
         let mut changed = false;
 
         for device in discovered {
+            // Skip devices that haven't completed their interview yet (no
+            // endpoint means we don't know what the device is — it could be a
+            // sleepy remote still being discovered).  Also skip devices that
+            // have been classified as remotes — they are input-only and should
+            // never appear in the lamps map.
+            if device.endpoint.is_none() || device.device_type == ZigbeeDeviceType::Remote {
+                continue;
+            }
+
             let id = device.id.clone();
             let previous = lamps.get(&id).cloned();
             let runtime = lamps.entry(id.clone()).or_insert_with(|| ZigbeeLampRuntime {
@@ -1223,6 +1244,7 @@ impl NativeZigbeeManager {
                     supports_temperature: device.supports_temperature,
                     color_temp_min: if device.supports_temperature { Some(153) } else { None },
                     color_temp_max: if device.supports_temperature { Some(500) } else { None },
+                    is_remote: device.device_type == ZigbeeDeviceType::Remote,
                 },
                 state: RuntimeLampState {
                     is_on: device.is_on,
@@ -1249,6 +1271,7 @@ impl NativeZigbeeManager {
             runtime.config.supports_temperature = device.supports_temperature;
             runtime.config.color_temp_min = if device.supports_temperature { Some(153) } else { None };
             runtime.config.color_temp_max = if device.supports_temperature { Some(500) } else { None };
+            runtime.config.is_remote = device.device_type == ZigbeeDeviceType::Remote;
             runtime.connected = device.connected;
             runtime.reachable = device.reachable;
             runtime.interview_completed = device.endpoint.is_some();
@@ -1697,7 +1720,7 @@ fn connection_error_to_string(error: ConnectionError) -> String {
 #[cfg(test)]
 mod tests {
     use super::{NativeZigbeeManager, StoredZigbeeLampConfig, default_name_from_friendly_name};
-    use crate::{config::Config, zigbee_native::{DriverLifecycle, NativeDiscoveredDevice}};
+    use crate::{config::Config, zigbee_native::{DriverLifecycle, NativeDiscoveredDevice, ZigbeeDeviceType}};
     use tempfile::tempdir;
 
     #[test]
@@ -1752,6 +1775,7 @@ mod tests {
                 supports_temperature: false,
                 color_temp_min: None,
                 color_temp_max: None,
+                is_remote: false,
             }])
             .expect("serialize zigbee lamps"),
         )
@@ -1773,6 +1797,7 @@ mod tests {
                 output_clusters: vec![25],
                 supports_brightness: true,
                 supports_temperature: false,
+                device_type: ZigbeeDeviceType::Lamp,
                 connected: true,
                 reachable: true,
                 is_on: true,

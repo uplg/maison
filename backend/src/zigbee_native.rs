@@ -12,6 +12,7 @@ use ezsp::{
         key::Data as EmberKeyData,
         message::Destination,
         network::{Duration as NetworkDuration, Parameters as EmberNetworkParameters, Status as EmberNetworkStatus},
+        node::Type as EmberNodeType,
         security::initial,
     },
     ezsp::{config, decision, network::InitBitmask as NetworkInitBitmask, policy},
@@ -24,6 +25,8 @@ use tokio::{
     time::{Instant, MissedTickBehavior, interval, timeout},
 };
 use tracing::{debug, error, info, warn};
+
+use silizium::zigbee::security::man as security_man;
 
 use crate::error::AppError;
 
@@ -46,6 +49,7 @@ const HOME_AUTOMATION_PROFILE_ID: u16 = 0x0104;
 const SIMPLE_DESC_REQ_CLUSTER_ID: u16 = 0x0004;
 const ACTIVE_EP_REQ_CLUSTER_ID: u16 = 0x0005;
 const DEVICE_ANNCE_CLUSTER_ID: u16 = 0x0013;
+const BIND_REQ_CLUSTER_ID: u16 = 0x0021;
 const SIMPLE_DESC_RSP_CLUSTER_ID: u16 = 0x8004;
 const ACTIVE_EP_RSP_CLUSTER_ID: u16 = 0x8005;
 const ON_OFF_CLUSTER_ID: u16 = 0x0006;
@@ -53,13 +57,41 @@ const LEVEL_CONTROL_CLUSTER_ID: u16 = 0x0008;
 const COLOR_CONTROL_CLUSTER_ID: u16 = 0x0300;
 const DEFAULT_SOURCE_ENDPOINT: u8 = 1;
 const DEFAULT_HOME_GATEWAY_DEVICE_ID: u16 = 0x0050;
+
+/// ZCL Level Control cluster-specific command IDs (client → server).
+const ZCL_LEVEL_CONTROL_COMMAND_MOVE: u8 = 0x01;
+const ZCL_LEVEL_CONTROL_COMMAND_STEP: u8 = 0x02;
+const ZCL_LEVEL_CONTROL_COMMAND_STOP: u8 = 0x03;
+const ZCL_LEVEL_CONTROL_COMMAND_MOVE_WITH_ON_OFF: u8 = 0x05;
+const ZCL_LEVEL_CONTROL_COMMAND_STEP_WITH_ON_OFF: u8 = 0x06;
+const ZCL_LEVEL_CONTROL_COMMAND_STOP_WITH_ON_OFF: u8 = 0x07;
+
+/// Brightness step applied per dimmer button press (in percentage points, 0–100 scale).
+const DIMMER_BRIGHTNESS_STEP: u8 = 15;
+/// Philips Lighting OUI prefix (used for EUI64-based remote detection).
+/// Philips Hue remotes/dimmers have EUI64s starting with 00:17:88.
+const PHILIPS_OUI_PREFIX: &str = "00:17:88";
+/// Manufacturer-specific cluster used by Philips Hue remotes for button
+/// notifications (`hueNotification` command).
+const PHILIPS_SPECIFIC_CLUSTER_ID: u16 = 0xFC00;
 const DEFAULT_STACK_PROFILE: u16 = 2;
 const DEFAULT_SECURITY_LEVEL: u16 = 5;
 const DEFAULT_NETWORK_CHANNEL: u8 = 11;
 const DEFAULT_NETWORK_TX_POWER: u8 = 8;
-const DEFAULT_LOCAL_INPUT_CLUSTERS: &[u16] = &[0x0000, 0x0006, 0x0008, 0x0300, 0x0403, 0x0201];
+const DEFAULT_LOCAL_INPUT_CLUSTERS: &[u16] = &[0x0000, 0x0006, 0x0008, 0x0300, 0x0403, 0x0201, 0xFC00];
 const DEFAULT_LOCAL_OUTPUT_CLUSTERS: &[u16] = &[0x0000, 0x0006, 0x0008, 0x0300, 0x0403];
 const ZIGBEE_ALLIANCE09_LINK_KEY: EmberKeyData = *b"ZigBeeAlliance09";
+
+/// Zigbee device type classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZigbeeDeviceType {
+    /// A controllable light (has On/Off, Level Control, or Color Control input clusters).
+    Lamp,
+    /// A remote control / dimmer switch (sends On/Off and Level Control commands via output clusters).
+    Remote,
+    /// Any other device type we don't specifically handle.
+    Unknown,
+}
 
 /// Interval between liveness probes in tick counts (150 ticks * 200ms = 30 seconds).
 const LIVENESS_PROBE_INTERVAL_TICKS: u32 = 150;
@@ -111,6 +143,7 @@ pub struct NativeDiscoveredDevice {
     pub output_clusters: Vec<u16>,
     pub supports_brightness: bool,
     pub supports_temperature: bool,
+    pub device_type: ZigbeeDeviceType,
     pub connected: bool,
     pub reachable: bool,
     pub is_on: bool,
@@ -132,6 +165,7 @@ pub struct NativeKnownDevice {
     pub manufacturer: Option<String>,
     pub supports_brightness: bool,
     pub supports_temperature: bool,
+    pub device_type: ZigbeeDeviceType,
 }
 
 #[derive(Debug, Default)]
@@ -348,6 +382,9 @@ struct EzspContext {
     /// Updated on every successful EZSP command or callback.  Used by the watchdog
     /// to detect a silently-dead pipeline.
     last_activity: Instant,
+    /// The coordinator's own EUI64, fetched once at startup.
+    /// Needed for ZDO Bind_req destination addresses.
+    coordinator_eui64: Option<Eui64>,
 }
 
 #[derive(Debug, Clone)]
@@ -357,6 +394,7 @@ struct DiscoveredDevice {
     endpoint: Option<u8>,
     input_clusters: Vec<u16>,
     output_clusters: Vec<u16>,
+    device_type: ZigbeeDeviceType,
     supports_brightness: bool,
     supports_temperature: bool,
     has_color_control_cluster: bool,
@@ -761,6 +799,7 @@ async fn try_open_ezsp_context(
         next_global_sequence: 1,
         next_device_sequence: HashMap::new(),
         last_activity: Instant::now(),
+        coordinator_eui64: None,
     })
 }
 
@@ -820,9 +859,39 @@ async fn ensure_coordinator_network(
         info!(serial_port = %serial_port, "forming new Zigbee coordinator network");
         form_coordinator_network(context).await?;
         state = wait_for_network_ready(context).await?;
+    } else {
+        // The network already exists — try to refresh the security state so that
+        // any policy changes (e.g. removing REQUIRE_ENCRYPTED_KEY) take effect.
+        // This may fail with EmberInvalidCall on some firmware (security state
+        // can only be set before the network is up) — that's OK, the runtime
+        // policies set in configure_stack() are the ones that matter for join
+        // behavior.
+        info!(serial_port = %serial_port, "refreshing trust center security state on existing network");
+        match context
+            .uart
+            .set_initial_security_state(build_initial_security_state())
+            .await
+        {
+            Ok(()) => info!("trust center security state refreshed successfully"),
+            Err(error) => warn!(
+                error = %error,
+                "set_initial_security_state not accepted on running network (non-fatal — runtime policies still apply)"
+            ),
+        }
     }
 
     log_network_parameters(context, serial_port).await?;
+
+    // Fetch and cache the coordinator's own EUI64 — needed for ZDO Bind_req.
+    match context.uart.get_eui64().await {
+        Ok(eui64) => {
+            info!(eui64 = %format_eui64(eui64), "coordinator EUI64 cached");
+            context.coordinator_eui64 = Some(eui64);
+        }
+        Err(error) => {
+            warn!(error = %error, "failed to fetch coordinator EUI64 — remote binding will not work");
+        }
+    }
 
     Ok(state)
 }
@@ -879,6 +948,65 @@ async fn configure_stack(context: &mut EzspContext) -> Result<(), AppError> {
         .set_configuration_value(config::Id::SecurityLevel, DEFAULT_SECURITY_LEVEL)
         .await
         .map_err(map_ezsp_error("set security level"))?;
+
+    // Allow sleepy end devices (remotes, sensors) to join as children.
+    // Default may be 0 on some firmware — explicitly set a reasonable limit.
+    context
+        .uart
+        .set_configuration_value(config::Id::MaxEndDeviceChildren, 16)
+        .await
+        .map_err(map_ezsp_error("set max end device children"))?;
+
+    // End device poll timeout: value 8 = 2^8 = 256 minutes (~4 hours).
+    // Sleepy devices that don't poll within this window are removed from the
+    // child table.  Remotes poll infrequently, so be generous.
+    context
+        .uart
+        .set_configuration_value(config::Id::EndDevicePollTimeout, 8)
+        .await
+        .map_err(map_ezsp_error("set end device poll timeout"))?;
+
+    // --- Trust Center policies ---
+    // Allow new devices to join (ALLOW_JOINS) and accept unsecured rejoins
+    // (ALLOW_UNSECURED_REJOINS).  The network key will be sent encrypted with
+    // the joiner's link key (the well-known key imported into the transient
+    // table at permit-join time).  This matches the Zigbee2MQTT Ember adapter
+    // policy: bitmask 0x03.
+    context
+        .uart
+        .set_policy(
+            policy::Id::TrustCenter,
+            (decision::Bitmask::ALLOW_JOINS | decision::Bitmask::ALLOW_UNSECURED_REJOINS).bits(),
+        )
+        .await
+        .map_err(map_ezsp_error("set trust center policy"))?;
+
+    // Allow devices to request the Trust Center link key (needed for Zigbee 3.0).
+    context
+        .uart
+        .set_policy(
+            policy::Id::TcKeyRequest,
+            u8::from(decision::Id::AllowTcKeyRequestsAndSendCurrentKey),
+        )
+        .await
+        .map_err(map_ezsp_error("set TC key request policy"))?;
+
+    // Allow Trust Center rejoins using the well-known "ZigBeeAlliance09" key.
+    // The Hue Dimmer v1 (and many Zigbee 3.0 devices) use this key after factory reset.
+    // Value 0x01 = allow; timeout is controlled by TcRejoinsUsingWellKnownKeyTimeoutSec.
+    context
+        .uart
+        .set_policy(policy::Id::TcJoinsUsingWellKnownKey, 0x01u8)
+        .await
+        .map_err(map_ezsp_error("set TC well-known key rejoin policy"))?;
+
+    // Set the well-known key rejoin timeout to 600 seconds (10 minutes).
+    context
+        .uart
+        .set_configuration_value(config::Id::TcRejoinsUsingWellKnownKeyTimeoutSec, 600)
+        .await
+        .map_err(map_ezsp_error("set TC well-known key rejoin timeout"))?;
+
     context
         .uart
         .set_policy(
@@ -988,6 +1116,7 @@ fn build_initial_security_state() -> initial::State {
     initial::State::new(
         initial::Bitmask::TRUST_CENTER_GLOBAL_LINK_KEY
             | initial::Bitmask::HAVE_PRECONFIGURED_KEY
+            | initial::Bitmask::TRUST_CENTER_USES_HASHED_LINK_KEY
             | initial::Bitmask::REQUIRE_ENCRYPTED_KEY,
         ZIGBEE_ALLIANCE09_LINK_KEY,
         [0; 16],
@@ -1060,6 +1189,79 @@ fn parse_u16_literal(value: &str) -> Result<u16, std::num::ParseIntError> {
 async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand) -> Result<(), AppError> {
     match command {
         NativeZigbeeCommand::PermitJoin { seconds } => {
+            if seconds > 0 {
+                // Import the well-known "ZigBeeAlliance09" link key into the transient
+                // key table with a wildcard EUI64 (all zeros) BEFORE opening the network.
+                // This tells the NCP: "any new device joining with this key can use it to
+                // encrypt the network key transport."  Without this, REQUIRE_ENCRYPTED_KEY
+                // (baked into the NCP tokens at network formation) would prevent the NCP
+                // from delivering the network key to new devices.
+                // This is the same mechanism used by Zigbee2MQTT's Ember adapter.
+                // Wildcard EUI64 = all 0xFF — matches ANY joining device.
+                // Z2M uses 0xFFFFFFFFFFFFFFFF; all-zeros does NOT work as a wildcard.
+                let blank_eui64 = Eui64::new(0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF);
+                let key: security_man::Key = ZIGBEE_ALLIANCE09_LINK_KEY;
+
+                match context
+                    .uart
+                    .import_transient_key(blank_eui64, key, security_man::Flags::NONE)
+                    .await
+                {
+                    Ok(()) => {
+                        info!("transient key (ZigBeeAlliance09) imported for all joining devices (wildcard EUI64)");
+                    }
+                    Err(error) => {
+                        warn!(error = %error, "failed to import transient key — new devices may not be able to join");
+                    }
+                }
+
+                // Set TC policy to allow new joins + unsecured rejoins (matching Z2M's
+                // `emberSetJoinPolicy(USE_PRECONFIGURED_KEY)` = bitmask 0x03).
+                match context
+                    .uart
+                    .set_policy(
+                        policy::Id::TrustCenter,
+                        (decision::Bitmask::ALLOW_JOINS | decision::Bitmask::ALLOW_UNSECURED_REJOINS).bits(),
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        info!("trust center policy set to ALLOW_JOINS | ALLOW_UNSECURED_REJOINS");
+                    }
+                    Err(error) => {
+                        warn!(error = %error, "failed to update trust center policy for joining");
+                    }
+                }
+            } else {
+                // Closing the network: clear all transient keys so no new devices can
+                // join (they would need a matching key in the transient table).
+                match context.uart.clear_transient_link_keys().await {
+                    Ok(()) => {
+                        info!("transient link keys cleared (network closed)");
+                    }
+                    Err(error) => {
+                        warn!(error = %error, "failed to clear transient link keys");
+                    }
+                }
+
+                // Restrict TC policy to unsecured rejoins only (no new joins).
+                match context
+                    .uart
+                    .set_policy(
+                        policy::Id::TrustCenter,
+                        decision::Bitmask::ALLOW_UNSECURED_REJOINS.bits(),
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        info!("trust center policy set to ALLOW_UNSECURED_REJOINS only (network closed)");
+                    }
+                    Err(error) => {
+                        warn!(error = %error, "failed to restrict trust center policy after closing");
+                    }
+                }
+            }
+
             let duration = if seconds == 0 {
                 NetworkDuration::Disable
             } else {
@@ -1335,39 +1537,56 @@ async fn handle_callback(context: &mut EzspContext, callback: Callback) -> Optio
                 })
             }
             parameters::networking::handler::Handler::ChildJoin(join) => {
+                let eui64 = format_eui64(join.child_eui64());
+                let node_id: u16 = join.child_id().into();
+                let child_type = join.child_type();
+                info!(
+                    node_id = format_args!("0x{node_id:04x}"),
+                    eui64 = %eui64,
+                    joining = join.joining(),
+                    child_type = ?child_type,
+                    "ChildJoin callback received"
+                );
+
                 if join.joining() {
-                    let eui64 = format_eui64(join.child_eui64());
-                    let node_id: u16 = join.child_id().into();
-                    if context.joined_devices.iter().all(|device| device.node_id != node_id) {
-                        context.joined_devices.push(DiscoveredDevice {
-                            node_id,
-                            eui64: eui64.clone(),
-                            endpoint: None,
-                            input_clusters: Vec::new(),
-                            output_clusters: Vec::new(),
-                            supports_brightness: false,
-                            supports_temperature: false,
-                            has_color_control_cluster: false,
-                            is_on: false,
-                            brightness: 0,
-                            temperature: None,
-                            interview_completed: false,
-                            model: None,
-                            manufacturer: None,
-                            connected: true,
-                            reachable: true,
-                            interview_attempts: 0,
-                            last_seen: Some(Instant::now()),
-                            desired_brightness: None,
-                            desired_temperature: None,
-                            desired_state_applied: true,
-                        });
-                    } else if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == node_id) {
-                        device.connected = true;
-                        device.reachable = true;
-                        device.last_seen = Some(Instant::now());
+                    let is_sleepy = child_type == Ok(EmberNodeType::SleepyEndDevice);
+
+                    ensure_joined_device(context, node_id, eui64.clone());
+
+                    if is_sleepy {
+                        // Sleepy end devices (remotes, sensors) never respond
+                        // to ZDO requests.  Classify them immediately as
+                        // remotes — they will send us ZCL commands when the
+                        // user presses a button, confirming their role.
+                        let already_classified = context.joined_devices.iter()
+                            .any(|d| d.node_id == node_id && d.device_type == ZigbeeDeviceType::Remote);
+                        if already_classified {
+                            debug!(
+                                node_id = format_args!("0x{node_id:04x}"),
+                                eui64 = %eui64,
+                                "sleepy end device already classified as remote in TrustCenterJoin — skipping duplicate bind"
+                            );
+                        } else {
+                            info!(
+                                node_id = format_args!("0x{node_id:04x}"),
+                                eui64 = %eui64,
+                                "sleepy end device joined — classifying as remote (skipping ZDO interview)"
+                            );
+                            if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+                                device.device_type = ZigbeeDeviceType::Remote;
+                                device.endpoint = Some(1);
+                                device.output_clusters = vec![ON_OFF_CLUSTER_ID, LEVEL_CONTROL_CLUSTER_ID];
+                                device.interview_completed = true;
+                                device.supports_brightness = false;
+                                device.supports_temperature = false;
+                                device.has_color_control_cluster = false;
+                            }
+                            bind_remote_clusters(context, node_id, &eui64).await;
+                        }
+                    } else {
+                        request_known_device_discovery(context, node_id).await;
                     }
-                    request_known_device_discovery(context, node_id).await;
+
                     Some(NativeZigbeeEvent::DeviceJoined {
                         node_id,
                         eui64,
@@ -1412,8 +1631,38 @@ async fn handle_trust_center_join(
         EmberDeviceUpdate::StandardSecuritySecuredRejoin
         | EmberDeviceUpdate::StandardSecurityUnsecuredJoin
         | EmberDeviceUpdate::StandardSecurityUnsecuredRejoin => {
+            info!(
+                node_id = format_args!("0x{node_id:04x}"),
+                eui64 = %eui64,
+                join_status = ?status,
+                "TrustCenterJoin received"
+            );
             ensure_joined_device(context, node_id, eui64.clone());
-            request_known_device_discovery(context, node_id).await;
+
+            if is_known_remote_oui(&eui64) {
+                // Philips (and similar) remotes are sleepy end devices that
+                // never respond to ZDO requests.  Classify immediately.
+                info!(
+                    node_id = format_args!("0x{node_id:04x}"),
+                    eui64 = %eui64,
+                    "known remote OUI detected at TrustCenterJoin — classifying as remote (skipping ZDO interview)"
+                );
+                if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+                    device.device_type = ZigbeeDeviceType::Remote;
+                    device.endpoint = Some(1);
+                    device.output_clusters = vec![ON_OFF_CLUSTER_ID, LEVEL_CONTROL_CLUSTER_ID];
+                    device.interview_completed = true;
+                    device.supports_brightness = false;
+                    device.supports_temperature = false;
+                    device.has_color_control_cluster = false;
+                }
+                // The remote just joined — it's briefly awake.  Send ZDO
+                // Bind_req now so it knows to send button-press commands to us.
+                bind_remote_clusters(context, node_id, &eui64).await;
+            } else {
+                request_known_device_discovery(context, node_id).await;
+            }
+
             Some(NativeZigbeeEvent::DeviceJoined { node_id, eui64 })
         }
         EmberDeviceUpdate::DeviceLeft => {
@@ -1451,12 +1700,18 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
             device.interview_attempts = 0;
         }
     } else {
+        info!(
+            node_id = format_args!("0x{node_id:04x}"),
+            eui64 = %eui64,
+            "new device added to joined list — awaiting interview"
+        );
         context.joined_devices.push(DiscoveredDevice {
             node_id,
             eui64,
             endpoint: None,
             input_clusters: Vec::new(),
             output_clusters: Vec::new(),
+            device_type: ZigbeeDeviceType::Unknown,
             supports_brightness: false,
             supports_temperature: false,
             has_color_control_cluster: false,
@@ -1481,8 +1736,10 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
 fn expire_unreachable_devices(context: &mut EzspContext) {
     let now = Instant::now();
     for device in &mut context.joined_devices {
-        // Only expire interviewed devices that are currently considered reachable.
-        if !device.reachable || device.endpoint.is_none() {
+        // Only expire interviewed lamps that are currently considered reachable.
+        // Remotes are sleepy end devices — they don't respond to probes, so we
+        // never expire them based on silence.
+        if !device.reachable || device.endpoint.is_none() || device.device_type == ZigbeeDeviceType::Remote {
             continue;
         }
 
@@ -1707,10 +1964,15 @@ async fn restore_desired_state(context: &mut EzspContext) {
 }
 
 async fn retry_pending_interviews(context: &mut EzspContext) {
+    // Only retry a few times proactively.  Sleepy end devices (remotes) are
+    // unlikely to respond to unsolicited requests, so we cap attempts here and
+    // rely on intercept-on-wake (see handle_incoming_cluster) instead.
+    const MAX_PROACTIVE_INTERVIEW_ATTEMPTS: u32 = 3;
+
     let retry_targets = context
         .joined_devices
         .iter()
-        .filter(|device| device.connected && device.endpoint.is_none() && device.interview_attempts < 20)
+        .filter(|device| device.connected && device.endpoint.is_none() && device.interview_attempts < MAX_PROACTIVE_INTERVIEW_ATTEMPTS)
         .map(|device| (device.node_id, device.eui64.clone(), device.interview_attempts))
         .collect::<Vec<_>>();
 
@@ -1726,6 +1988,11 @@ async fn retry_pending_interviews(context: &mut EzspContext) {
         }
         if let Err(error) = request_active_endpoints(context, node_id).await {
             warn!(node_id = format_args!("0x{node_id:04x}"), error = %error, "native zigbee endpoint discovery retry failed");
+        }
+        // Also probe common endpoints directly — some sleepy devices ignore
+        // Active_EP_req but still respond to Simple_Desc_req.
+        for endpoint in [1u8, 2] {
+            let _ = request_simple_descriptor(context, node_id, endpoint).await;
         }
     }
 }
@@ -1786,6 +2053,155 @@ async fn request_simple_descriptor(
         .map_err(map_ezsp_error("send Simple_Desc_req"))
 }
 
+/// Parse a colon-separated EUI64 string (e.g. "00:17:88:01:08:0c:00:0b")
+/// into raw bytes in network order (big-endian).
+fn parse_eui64_bytes(eui64: &str) -> Option<[u8; 8]> {
+    let parts: Vec<&str> = eui64.split(':').collect();
+    if parts.len() != 8 {
+        return None;
+    }
+    let mut bytes = [0u8; 8];
+    for (i, part) in parts.iter().enumerate() {
+        bytes[i] = u8::from_str_radix(part, 16).ok()?;
+    }
+    Some(bytes)
+}
+
+/// Send a ZDO Bind_req to `target_node_id`, telling it to bind its
+/// `cluster_id` on `remote_endpoint` to our coordinator's endpoint 1.
+///
+/// The Bind_req payload (ZDP spec section 2.4.3.2.2):
+/// ```text
+/// [seq(1)] [src_addr(8, LE)] [src_ep(1)] [cluster(2, LE)]
+/// [dst_addr_mode(1)] [dst_addr(8, LE)] [dst_ep(1)]
+/// ```
+/// `dst_addr_mode` 0x03 = 64-bit extended address.
+async fn send_bind_request(
+    context: &mut EzspContext,
+    target_node_id: u16,
+    remote_eui64: &str,
+    remote_endpoint: u8,
+    cluster_id: u16,
+) -> Result<(), AppError> {
+    let coordinator_eui64 = context.coordinator_eui64.ok_or_else(|| {
+        AppError::service_unavailable("coordinator EUI64 not available for bind request")
+    })?;
+
+    let remote_eui64_bytes = parse_eui64_bytes(remote_eui64).ok_or_else(|| {
+        AppError::service_unavailable(format!("invalid remote EUI64: {remote_eui64}"))
+    })?;
+
+    let coordinator_bytes = coordinator_eui64.into_array();
+    let sequence = next_device_sequence(context, target_node_id);
+
+    // Build the Bind_req payload.
+    // EUI64 on the wire is little-endian (reversed from the display order).
+    let mut payload = Vec::with_capacity(23);
+    payload.push(sequence);
+    // Source address: remote EUI64 in little-endian.
+    for &byte in remote_eui64_bytes.iter().rev() {
+        payload.push(byte);
+    }
+    // Source endpoint.
+    payload.push(remote_endpoint);
+    // Cluster ID (little-endian).
+    payload.push((cluster_id & 0xff) as u8);
+    payload.push((cluster_id >> 8) as u8);
+    // Destination address mode: 0x03 = 64-bit unicast.
+    payload.push(0x03);
+    // Destination address: coordinator EUI64 in little-endian.
+    for &byte in coordinator_bytes.iter().rev() {
+        payload.push(byte);
+    }
+    // Destination endpoint.
+    payload.push(DEFAULT_SOURCE_ENDPOINT);
+
+    let aps_frame = EzspApsFrame::new(
+        ZDO_PROFILE_ID,
+        BIND_REQ_CLUSTER_ID,
+        0,
+        0,
+        EzspApsOptions::RETRY | EzspApsOptions::ENABLE_ROUTE_DISCOVERY,
+        0,
+        0,
+    );
+
+    info!(
+        target_node_id = format_args!("0x{target_node_id:04x}"),
+        remote_eui64 = %remote_eui64,
+        remote_endpoint,
+        cluster_id = format_args!("0x{cluster_id:04x}"),
+        coordinator_eui64 = %format_eui64(coordinator_eui64),
+        "sending ZDO Bind_req to remote"
+    );
+
+    context
+        .uart
+        .send_unicast(
+            Destination::Direct(NodeId::from(target_node_id)),
+            aps_frame,
+            0,
+            payload.into_iter().collect(),
+        )
+        .await
+        .map(|_| ())
+        .map_err(map_ezsp_error("send Bind_req"))
+}
+
+/// Bind a Hue Dimmer's output clusters to our coordinator.
+///
+/// Endpoint 1 → standard ZCL On/Off + Level Control (direct lamp commands).
+/// Endpoint 2 → Philips manufacturer-specific cluster 0xFC00 (hueNotification
+///              button events).
+///
+/// Both endpoints are bound so we receive button presses regardless of which
+/// reporting path the remote firmware prefers.
+async fn bind_remote_clusters(context: &mut EzspContext, node_id: u16, eui64: &str) {
+    // Endpoint 1: standard HA clusters.
+    for cluster_id in [ON_OFF_CLUSTER_ID, LEVEL_CONTROL_CLUSTER_ID] {
+        match send_bind_request(context, node_id, eui64, 1, cluster_id).await {
+            Ok(()) => {
+                info!(
+                    node_id = format_args!("0x{node_id:04x}"),
+                    endpoint = 1,
+                    cluster_id = format_args!("0x{cluster_id:04x}"),
+                    "ZDO Bind_req sent successfully"
+                );
+            }
+            Err(error) => {
+                warn!(
+                    node_id = format_args!("0x{node_id:04x}"),
+                    endpoint = 1,
+                    cluster_id = format_args!("0x{cluster_id:04x}"),
+                    error = %error,
+                    "ZDO Bind_req failed"
+                );
+            }
+        }
+    }
+
+    // Endpoint 2: Philips-specific hueNotification cluster.
+    match send_bind_request(context, node_id, eui64, 2, PHILIPS_SPECIFIC_CLUSTER_ID).await {
+        Ok(()) => {
+            info!(
+                node_id = format_args!("0x{node_id:04x}"),
+                endpoint = 2,
+                cluster_id = format_args!("0x{PHILIPS_SPECIFIC_CLUSTER_ID:04x}"),
+                "ZDO Bind_req sent successfully (Philips cluster)"
+            );
+        }
+        Err(error) => {
+            warn!(
+                node_id = format_args!("0x{node_id:04x}"),
+                endpoint = 2,
+                cluster_id = format_args!("0x{PHILIPS_SPECIFIC_CLUSTER_ID:04x}"),
+                error = %error,
+                "ZDO Bind_req failed (Philips cluster)"
+            );
+        }
+    }
+}
+
 fn next_device_sequence(context: &mut EzspContext, node_id: u16) -> u8 {
     next_sequence_for_device(
         &mut context.next_device_sequence,
@@ -1819,10 +2235,397 @@ async fn request_known_device_discovery(context: &mut EzspContext, node_id: u16)
         return;
     };
 
+    // Remotes are already classified at join time — no discovery needed.
+    if target.device_type == ZigbeeDeviceType::Remote {
+        return;
+    }
+
     if should_probe_active_endpoints(&target) {
+        // Send Active_EP_req (standard discovery path).
         let _ = request_active_endpoints(context, node_id).await;
+
+        // Also send Simple_Desc_req directly for common endpoints (1 and 2).
+        // Sleepy end devices like the Hue Dimmer Switch often ignore
+        // Active_EP_req but still respond to direct Simple_Desc_req while
+        // they are briefly awake after joining.
+        for endpoint in [1u8, 2] {
+            let _ = request_simple_descriptor(context, node_id, endpoint).await;
+        }
     } else {
         let _ = refresh_device_state(context, &target).await;
+    }
+}
+
+/// Handle a ZCL command received from a remote / dimmer switch and broadcast
+/// the corresponding action to all connected lamps.
+async fn handle_remote_command(
+    context: &mut EzspContext,
+    remote_node_id: u16,
+    cluster_id: u16,
+    payload: &[u8],
+) {
+    info!(
+        remote_node_id = format_args!("0x{remote_node_id:04x}"),
+        cluster_id = format_args!("0x{cluster_id:04x}"),
+        payload = %hex_bytes(payload),
+        payload_len = payload.len(),
+        "remote: incoming command from remote device"
+    );
+
+    // ZCL frame: [frame_control, sequence, command_id, ...]
+    if payload.len() < 3 {
+        warn!(
+            remote_node_id = format_args!("0x{remote_node_id:04x}"),
+            payload = %hex_bytes(payload),
+            "remote: payload too short (need >= 3 bytes for ZCL frame)"
+        );
+        return;
+    }
+
+    let frame_control = payload[0];
+
+    // We only care about cluster-specific commands (direction: client → server).
+    // Frame control bit 0-1 = 01 (cluster-specific), bit 3 = 0 (client → server).
+    let is_cluster_specific = (frame_control & 0x03) == 0x01;
+    if !is_cluster_specific {
+        info!(
+            remote_node_id = format_args!("0x{remote_node_id:04x}"),
+            frame_control = format_args!("0x{frame_control:02x}"),
+            "remote: ignoring non-cluster-specific frame (global command or report)"
+        );
+        return;
+    }
+
+    // Manufacturer-specific frames (frame_control bit 2 set) have a 2-byte
+    // manufacturer code between the sequence number and the command ID:
+    //   Standard:  [frame_control, sequence, command_id, ...]
+    //   Mfr-spec:  [frame_control, sequence, mfr_lo, mfr_hi, command_id, ...]
+    let is_manufacturer_specific = (frame_control & 0x04) != 0;
+    let (command_id, zcl_header_len) = if is_manufacturer_specific {
+        if payload.len() < 5 {
+            warn!(
+                remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                payload = %hex_bytes(payload),
+                "remote: manufacturer-specific payload too short (need >= 5 bytes)"
+            );
+            return;
+        }
+        (payload[4], 5)
+    } else {
+        (payload[2], 3)
+    };
+
+    // Update the remote's last_seen timestamp.
+    if let Some(remote) = context.joined_devices.iter_mut().find(|d| d.node_id == remote_node_id) {
+        remote.last_seen = Some(Instant::now());
+        remote.reachable = true;
+        remote.connected = true;
+    }
+
+    match cluster_id {
+        ON_OFF_CLUSTER_ID => {
+            match command_id {
+                ZCL_ON_OFF_COMMAND_ON => {
+                    info!(
+                        remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                        "remote: ON button pressed — turning all lamps ON"
+                    );
+                    broadcast_power_to_all_lamps(context, true).await;
+                }
+                ZCL_ON_OFF_COMMAND_OFF => {
+                    info!(
+                        remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                        "remote: OFF button pressed — turning all lamps OFF"
+                    );
+                    broadcast_power_to_all_lamps(context, false).await;
+                }
+                _ => {
+                    debug!(
+                        remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                        command_id,
+                        "remote: unknown On/Off command"
+                    );
+                }
+            }
+        }
+        LEVEL_CONTROL_CLUSTER_ID => {
+            match command_id {
+                ZCL_LEVEL_CONTROL_COMMAND_STEP | ZCL_LEVEL_CONTROL_COMMAND_STEP_WITH_ON_OFF => {
+                    // Step payload (after ZCL header): [step_mode(1), step_size(1), transition_time(2)]
+                    // step_mode: 0x00 = Up, 0x01 = Down
+                    if payload.len() > zcl_header_len {
+                        let step_mode = payload[zcl_header_len];
+                        let step_up = step_mode == 0x00;
+                        info!(
+                            remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                            direction = if step_up { "up" } else { "down" },
+                            "remote: brightness step — adjusting all lamps"
+                        );
+                        broadcast_brightness_step_to_all_lamps(context, step_up).await;
+                    }
+                }
+                ZCL_LEVEL_CONTROL_COMMAND_MOVE | ZCL_LEVEL_CONTROL_COMMAND_MOVE_WITH_ON_OFF => {
+                    // Move payload (after ZCL header): [move_mode(1), rate(1)]
+                    // move_mode: 0x00 = Up, 0x01 = Down
+                    if payload.len() > zcl_header_len {
+                        let move_mode = payload[zcl_header_len];
+                        let step_up = move_mode == 0x00;
+                        info!(
+                            remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                            direction = if step_up { "up" } else { "down" },
+                            "remote: brightness move — adjusting all lamps"
+                        );
+                        broadcast_brightness_step_to_all_lamps(context, step_up).await;
+                    }
+                }
+                ZCL_LEVEL_CONTROL_COMMAND_STOP | ZCL_LEVEL_CONTROL_COMMAND_STOP_WITH_ON_OFF => {
+                    debug!(
+                        remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                        "remote: level stop command (ignored)"
+                    );
+                }
+                _ => {
+                    debug!(
+                        remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                        command_id,
+                        "remote: unknown Level Control command"
+                    );
+                }
+            }
+        }
+        PHILIPS_SPECIFIC_CLUSTER_ID => {
+            // Philips hueNotification (command 0x00 on cluster 0xFC00, endpoint 2).
+            // This is a manufacturer-specific cluster command.  The ZCL payload
+            // (after the header) is:
+            //   [button(1), unknown(3), action_type(1), unknown(1), time(1), unknown(1)]
+            //
+            // button:      1 = On, 2 = Dim Up, 3 = Dim Down, 4 = Off
+            // action_type: 0 = initial_press, 1 = hold (repeat),
+            //              2 = short_release, 3 = long_release
+            let hue_payload = &payload[zcl_header_len..];
+            if hue_payload.is_empty() {
+                warn!(
+                    remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                    "remote: hueNotification payload is empty"
+                );
+                return;
+            }
+
+            let button = hue_payload[0];
+            let action_type = if hue_payload.len() >= 5 { hue_payload[4] } else { 0 };
+
+            let button_name = match button {
+                1 => "On",
+                2 => "Dim Up",
+                3 => "Dim Down",
+                4 => "Off",
+                _ => "Unknown",
+            };
+            let action_name = match action_type {
+                0 => "initial_press",
+                1 => "hold",
+                2 => "short_release",
+                3 => "long_release",
+                _ => "unknown",
+            };
+
+            info!(
+                remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                button,
+                button_name,
+                action_type,
+                action_name,
+                hue_payload = %hex_bytes(hue_payload),
+                "remote: hueNotification from Philips dimmer"
+            );
+
+            // Act on initial_press (0) and hold/repeat (1) only.
+            // Ignore release events to avoid double-firing.
+            if action_type > 1 {
+                debug!(
+                    remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                    action_name,
+                    "remote: ignoring release event"
+                );
+                return;
+            }
+
+            match button {
+                1 => {
+                    info!(
+                        remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                        "remote: hue ON button — turning all lamps ON"
+                    );
+                    broadcast_power_to_all_lamps(context, true).await;
+                }
+                4 => {
+                    info!(
+                        remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                        "remote: hue OFF button — turning all lamps OFF"
+                    );
+                    broadcast_power_to_all_lamps(context, false).await;
+                }
+                2 => {
+                    info!(
+                        remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                        "remote: hue DIM UP — increasing brightness"
+                    );
+                    broadcast_brightness_step_to_all_lamps(context, true).await;
+                }
+                3 => {
+                    info!(
+                        remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                        "remote: hue DIM DOWN — decreasing brightness"
+                    );
+                    broadcast_brightness_step_to_all_lamps(context, false).await;
+                }
+                _ => {
+                    debug!(
+                        remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                        button,
+                        "remote: unknown hueNotification button"
+                    );
+                }
+            }
+        }
+        _ => {
+            debug!(
+                remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                cluster_id = format_args!("0x{cluster_id:04x}"),
+                command_id,
+                payload = %hex_bytes(payload),
+                "remote: unhandled cluster command"
+            );
+        }
+    }
+}
+
+/// Send a power on/off command to every connected lamp.
+async fn broadcast_power_to_all_lamps(context: &mut EzspContext, enabled: bool) {
+    let targets: Vec<(u16, u8)> = context
+        .joined_devices
+        .iter()
+        .filter(|d| d.device_type == ZigbeeDeviceType::Lamp && d.reachable && d.endpoint.is_some())
+        .filter(|d| d.input_clusters.contains(&ON_OFF_CLUSTER_ID))
+        .map(|d| (d.node_id, d.endpoint.unwrap()))
+        .collect();
+
+    info!(
+        enabled,
+        target_count = targets.len(),
+        "remote broadcast: sending power command to all lamps"
+    );
+
+    for (lamp_node_id, endpoint) in targets {
+        let sequence = next_device_sequence(context, lamp_node_id);
+        let zcl_payload = build_on_off_command_payload(enabled, sequence);
+        let aps_frame = EzspApsFrame::new(
+            HOME_AUTOMATION_PROFILE_ID,
+            ON_OFF_CLUSTER_ID,
+            DEFAULT_SOURCE_ENDPOINT,
+            endpoint,
+            EzspApsOptions::RETRY | EzspApsOptions::ENABLE_ROUTE_DISCOVERY,
+            0,
+            0,
+        );
+
+        match context
+            .uart
+            .send_unicast(
+                Destination::Direct(NodeId::from(lamp_node_id)),
+                aps_frame,
+                0,
+                zcl_payload.into_iter().collect(),
+            )
+            .await
+        {
+            Ok(_) => {
+                if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == lamp_node_id) {
+                    device.is_on = enabled;
+                }
+                debug!(
+                    lamp_node_id = format_args!("0x{lamp_node_id:04x}"),
+                    enabled,
+                    "remote broadcast: power command sent"
+                );
+            }
+            Err(error) => {
+                warn!(
+                    lamp_node_id = format_args!("0x{lamp_node_id:04x}"),
+                    error = %error,
+                    "remote broadcast: power command failed"
+                );
+            }
+        }
+    }
+}
+
+/// Adjust brightness of every connected lamp by a fixed step.
+async fn broadcast_brightness_step_to_all_lamps(context: &mut EzspContext, step_up: bool) {
+    let targets: Vec<(u16, u8, u8)> = context
+        .joined_devices
+        .iter()
+        .filter(|d| d.device_type == ZigbeeDeviceType::Lamp && d.reachable && d.endpoint.is_some())
+        .filter(|d| d.supports_brightness && d.input_clusters.contains(&LEVEL_CONTROL_CLUSTER_ID))
+        .map(|d| (d.node_id, d.endpoint.unwrap(), d.brightness))
+        .collect();
+
+    info!(
+        direction = if step_up { "up" } else { "down" },
+        step = DIMMER_BRIGHTNESS_STEP,
+        target_count = targets.len(),
+        "remote broadcast: sending brightness step to all lamps"
+    );
+
+    for (lamp_node_id, endpoint, current_brightness) in targets {
+        let new_brightness = if step_up {
+            current_brightness.saturating_add(DIMMER_BRIGHTNESS_STEP).min(100)
+        } else {
+            current_brightness.saturating_sub(DIMMER_BRIGHTNESS_STEP).max(1)
+        };
+
+        let sequence = next_device_sequence(context, lamp_node_id);
+        let zcl_payload = build_brightness_command_payload(new_brightness, sequence);
+        let aps_frame = EzspApsFrame::new(
+            HOME_AUTOMATION_PROFILE_ID,
+            LEVEL_CONTROL_CLUSTER_ID,
+            DEFAULT_SOURCE_ENDPOINT,
+            endpoint,
+            EzspApsOptions::RETRY | EzspApsOptions::ENABLE_ROUTE_DISCOVERY,
+            0,
+            0,
+        );
+
+        match context
+            .uart
+            .send_unicast(
+                Destination::Direct(NodeId::from(lamp_node_id)),
+                aps_frame,
+                0,
+                zcl_payload.into_iter().collect(),
+            )
+            .await
+        {
+            Ok(_) => {
+                if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == lamp_node_id) {
+                    device.brightness = new_brightness;
+                    device.is_on = new_brightness > 0;
+                    device.desired_brightness = Some(new_brightness);
+                }
+                debug!(
+                    lamp_node_id = format_args!("0x{lamp_node_id:04x}"),
+                    new_brightness,
+                    "remote broadcast: brightness step sent"
+                );
+            }
+            Err(error) => {
+                warn!(
+                    lamp_node_id = format_args!("0x{lamp_node_id:04x}"),
+                    error = %error,
+                    "remote broadcast: brightness step failed"
+                );
+            }
+        }
     }
 }
 
@@ -1832,9 +2635,101 @@ async fn handle_incoming_cluster(
     cluster_id: u16,
     payload: &[u8],
 ) -> Option<NativeZigbeeEvent> {
+    // --- Intercept-on-wake / auto-classify: if this device hasn't completed
+    // its interview, it must be awake right now (it just sent us something).
+    // Check whether the incoming message is a ZCL cluster-specific command on
+    // On/Off or Level Control — if so, the device is a remote control and will
+    // *never* answer ZDO requests.  Classify it immediately instead of wasting
+    // time on futile discovery.
+    let needs_interview = context
+        .joined_devices
+        .iter()
+        .any(|device| device.node_id == node_id && device.endpoint.is_none());
+
+    if needs_interview {
+        let is_light_cluster = cluster_id == ON_OFF_CLUSTER_ID || cluster_id == LEVEL_CONTROL_CLUSTER_ID;
+        let is_philips_cluster = cluster_id == PHILIPS_SPECIFIC_CLUSTER_ID;
+        let is_cluster_specific_command = payload.len() >= 3 && (payload[0] & 0x03) == 0x01;
+
+        if (is_light_cluster || is_philips_cluster) && is_cluster_specific_command {
+            // The uninterviewed device is sending us On/Off or Level Control
+            // cluster-specific commands — it's a remote / dimmer switch.
+            // Classify it immediately so button presses work right away.
+            info!(
+                node_id = format_args!("0x{node_id:04x}"),
+                cluster_id = format_args!("0x{cluster_id:04x}"),
+                payload = %hex_bytes(payload),
+                "uninterviewed device sent ZCL remote command — auto-classifying as remote"
+            );
+            let remote_eui64 = context.joined_devices.iter().find(|d| d.node_id == node_id).map(|d| d.eui64.clone());
+            if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+                device.device_type = ZigbeeDeviceType::Remote;
+                device.endpoint = Some(1);
+                device.output_clusters = vec![ON_OFF_CLUSTER_ID, LEVEL_CONTROL_CLUSTER_ID];
+                device.interview_completed = true;
+                device.supports_brightness = false;
+                device.supports_temperature = false;
+                device.has_color_control_cluster = false;
+            }
+            // The device is awake now — send bind requests so future presses reach us.
+            if let Some(eui64) = remote_eui64 {
+                bind_remote_clusters(context, node_id, &eui64).await;
+            }
+            // Fall through to the remote routing below — don't trigger ZDO discovery.
+        } else {
+            info!(
+                node_id = format_args!("0x{node_id:04x}"),
+                cluster_id = format_args!("0x{cluster_id:04x}"),
+                "device is awake but uninterviewed — triggering discovery now"
+            );
+            // Reset attempt counter so we get fresh tries from this wake window.
+            if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+                device.interview_attempts = 0;
+            }
+            request_known_device_discovery(context, node_id).await;
+        }
+    }
+
+    // Check if this message comes from a known remote device.
+    let sender_is_remote = context
+        .joined_devices
+        .iter()
+        .any(|device| device.node_id == node_id && device.device_type == ZigbeeDeviceType::Remote);
+
+    if sender_is_remote {
+        // Skip ZDO frames (Device Announce, Bind Response, etc.) — they are
+        // not ZCL commands.  ZDO request cluster IDs are 0x0000..0x00FF and
+        // response cluster IDs are 0x8000..0x80FF.
+        let is_zdo = cluster_id <= 0x00FF || (0x8000..=0x80FF).contains(&cluster_id);
+        if is_zdo {
+            debug!(
+                node_id = format_args!("0x{node_id:04x}"),
+                cluster_id = format_args!("0x{cluster_id:04x}"),
+                "ignoring ZDO frame from remote (not a ZCL command)"
+            );
+        } else {
+            info!(
+                node_id = format_args!("0x{node_id:04x}"),
+                cluster_id = format_args!("0x{cluster_id:04x}"),
+                "routing incoming message to remote command handler"
+            );
+            handle_remote_command(context, node_id, cluster_id, payload).await;
+        }
+        return Some(NativeZigbeeEvent::IncomingMessage {
+            node_id,
+            cluster_id,
+            payload: payload.to_vec(),
+        });
+    }
+
     match cluster_id {
         DEVICE_ANNCE_CLUSTER_ID => {
             if let Some(announcement) = parse_device_announce(payload) {
+                info!(
+                    node_id = format_args!("0x{:04x}", announcement.node_id),
+                    eui64 = %announcement.eui64,
+                    "device announce received — starting discovery"
+                );
                 ensure_joined_device(context, announcement.node_id, announcement.eui64.clone());
                 request_known_device_discovery(context, announcement.node_id).await;
                 Some(NativeZigbeeEvent::DeviceAnnounced {
@@ -1857,21 +2752,26 @@ async fn handle_incoming_cluster(
         }
         SIMPLE_DESC_RSP_CLUSTER_ID => {
             if let Some(description) = parse_simple_desc_response(payload) {
-                debug!(
+                let classified_type = classify_device_type(&description);
+                info!(
                     node_id = format_args!("0x{node_id:04x}"),
                     endpoint = description.endpoint,
                     profile_id = format_args!("0x{:04x}", description.profile_id),
                     device_id = format_args!("0x{:04x}", description.device_id),
                     input_clusters = ?description.input_clusters,
                     output_clusters = ?description.output_clusters,
-                    "native zigbee simple descriptor parsed"
+                    device_type = ?classified_type,
+                    "simple descriptor received — device classified"
                 );
                 let mut refresh_target = None;
                 if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == node_id) {
                     device.connected = true;
                     device.reachable = true;
                     device.last_seen = Some(Instant::now());
-                    let should_replace_endpoint = (device.endpoint.is_none() && is_preferred_light_endpoint(&description))
+
+                    let is_remote = classified_type == ZigbeeDeviceType::Remote;
+                    let should_replace_endpoint = is_remote
+                        || (device.endpoint.is_none() && is_preferred_light_endpoint(&description))
                         || device.endpoint == Some(description.endpoint)
                         || (is_preferred_light_endpoint(&description)
                             && !device.input_clusters.contains(&ON_OFF_CLUSTER_ID)
@@ -1882,12 +2782,27 @@ async fn handle_incoming_cluster(
                         device.endpoint = Some(description.endpoint);
                         device.input_clusters = description.input_clusters.clone();
                         device.output_clusters = description.output_clusters.clone();
-                        device.supports_brightness = description.input_clusters.contains(&LEVEL_CONTROL_CLUSTER_ID);
-                        device.has_color_control_cluster = description.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID);
-                        device.supports_temperature = device.supports_temperature && device.has_color_control_cluster;
+                        device.device_type = classified_type;
+                        if is_remote {
+                            device.supports_brightness = false;
+                            device.supports_temperature = false;
+                            device.has_color_control_cluster = false;
+                            info!(
+                                node_id = format_args!("0x{node_id:04x}"),
+                                eui64 = %device.eui64,
+                                endpoint = description.endpoint,
+                                "detected Zigbee remote / dimmer switch"
+                            );
+                        } else {
+                            device.supports_brightness = description.input_clusters.contains(&LEVEL_CONTROL_CLUSTER_ID);
+                            device.has_color_control_cluster = description.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID);
+                            device.supports_temperature = device.supports_temperature && device.has_color_control_cluster;
+                        }
                         device.interview_completed = true;
                         device.interview_attempts = 0;
-                        refresh_target = Some(device.clone());
+                        if !is_remote {
+                            refresh_target = Some(device.clone());
+                        }
                     }
                 }
                 if let Some(target) = refresh_target {
@@ -2172,6 +3087,47 @@ fn is_preferred_light_endpoint(description: &SimpleDescriptor) -> bool {
             || description.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID))
 }
 
+/// Classify a device based on its Simple Descriptor.
+/// Check whether an EUI64 belongs to a manufacturer known to produce Zigbee
+/// remote controls / dimmer switches.  These sleepy end devices never respond
+/// to ZDO interview requests, so we classify them at join time by OUI.
+fn is_known_remote_oui(eui64: &str) -> bool {
+    eui64.starts_with(PHILIPS_OUI_PREFIX)
+}
+
+///
+/// A remote / dimmer switch is identified by:
+///   - ZHA profile (0x0104)
+///   - device_id in the controller range (0x0820 = Non-Color Controller, 0x0830 = Color Controller,
+///     or 0x0840 = Scene Controller), OR
+///   - output clusters containing On/Off and/or Level Control while input clusters do NOT
+///     contain On/Off (i.e. the device *sends* light commands but doesn't *receive* them)
+fn classify_device_type(description: &SimpleDescriptor) -> ZigbeeDeviceType {
+    if description.profile_id != HOME_AUTOMATION_PROFILE_ID {
+        return ZigbeeDeviceType::Unknown;
+    }
+
+    // Well-known ZHA controller device IDs.
+    let is_controller_device = matches!(description.device_id, 0x0820 | 0x0830 | 0x0840 | 0x0006);
+
+    // Heuristic: the device has On/Off or Level Control in its *output* clusters
+    // (meaning it sends those commands) but NOT in its *input* clusters.
+    let sends_light_commands = description.output_clusters.contains(&ON_OFF_CLUSTER_ID)
+        || description.output_clusters.contains(&LEVEL_CONTROL_CLUSTER_ID);
+    let receives_light_commands = description.input_clusters.contains(&ON_OFF_CLUSTER_ID)
+        || description.input_clusters.contains(&LEVEL_CONTROL_CLUSTER_ID);
+
+    if is_controller_device || (sends_light_commands && !receives_light_commands) {
+        return ZigbeeDeviceType::Remote;
+    }
+
+    if is_preferred_light_endpoint(description) {
+        return ZigbeeDeviceType::Lamp;
+    }
+
+    ZigbeeDeviceType::Unknown
+}
+
 async fn drain_pending_requests(command_rx: &mut mpsc::Receiver<DriverRequest>, error: AppError) {
     let error_message = error.to_string();
     while let Some(request) = command_rx.recv().await {
@@ -2209,6 +3165,7 @@ async fn sync_status_devices(
             output_clusters: device.output_clusters.clone(),
             supports_brightness: device.supports_brightness,
             supports_temperature: device.supports_temperature,
+            device_type: device.device_type,
             connected: device.connected,
             reachable: device.reachable,
             is_on: device.is_on,
@@ -2274,6 +3231,7 @@ fn seed_known_device(device: NativeKnownDevice) -> DiscoveredDevice {
         eui64: device.eui64,
         endpoint: device.endpoint,
         has_color_control_cluster: device.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID),
+        device_type: device.device_type,
         input_clusters: device.input_clusters,
         output_clusters: device.output_clusters,
         supports_brightness: device.supports_brightness,
@@ -2396,6 +3354,7 @@ mod tests {
             endpoint: Some(11),
             input_clusters: vec![0, 3, 4, 5, 6, 8],
             output_clusters: vec![25],
+            device_type: super::ZigbeeDeviceType::Lamp,
             supports_brightness: true,
             supports_temperature: false,
             has_color_control_cluster: false,
@@ -2433,6 +3392,7 @@ mod tests {
             endpoint: Some(11),
             input_clusters: vec![0, 3, 4, 5, 6, 8],
             output_clusters: vec![25],
+            device_type: super::ZigbeeDeviceType::Lamp,
             supports_brightness: true,
             supports_temperature: false,
             has_color_control_cluster: false,
@@ -2462,6 +3422,7 @@ mod tests {
             endpoint: Some(11),
             input_clusters: vec![0, 3, 4, 5, 6, 8, super::COLOR_CONTROL_CLUSTER_ID],
             output_clusters: vec![25],
+            device_type: super::ZigbeeDeviceType::Lamp,
             supports_brightness: true,
             supports_temperature: false,
             has_color_control_cluster: true,
