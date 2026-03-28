@@ -6,6 +6,7 @@
 - Manage Tuya-based devices such as feeders, fountains, and litter boxes.
 - Track energy and status data for Meross plugs.
 - Control Philips Hue lamps over Bluetooth and Zigbee.
+- Handle Hue dimmer switch (v1 at least), global handling, On/off change power state for every connected zigbee device, dim up/down same.
 - Query Tempo data, predictions, history, and calibration helpers.
 - Keep access private with local authentication and secure session cookies.
 
