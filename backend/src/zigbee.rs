@@ -1216,12 +1216,13 @@ impl NativeZigbeeManager {
         let mut changed = false;
 
         for device in discovered {
-            // Skip devices that haven't completed their interview yet (no
+            // Skip devices that haven't completed their interview or discovery yet (no
             // endpoint means we don't know what the device is — it could be a
-            // sleepy remote still being discovered).  Also skip devices that
-            // have been classified as remotes — they are input-only and should
-            // never appear in the lamps map.
-            if device.endpoint.is_none() || device.device_type == ZigbeeDeviceType::Remote {
+            // sleepy remote still being discovered).
+            // Remotes are included so they get persisted to disk and survive
+            // coordinator reboots.  They are filtered out at API/display time
+            // in list_lamps() and stats() via the is_remote flag.
+            if device.endpoint.is_none() {
                 continue;
             }
 
@@ -1301,6 +1302,11 @@ impl NativeZigbeeManager {
 
         for lamp in lamps.values_mut() {
             if !seen.contains(&lamp.config.id) {
+                // Don't mark remotes as disconnected — they are sleepy end
+                // devices and may not appear in every snapshot.
+                if lamp.config.is_remote {
+                    continue;
+                }
                 if lamp.connected || lamp.reachable {
                     changed = true;
                 }
