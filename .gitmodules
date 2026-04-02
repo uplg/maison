@@ -1,0 +1,3 @@
+[submodule "vendor/ServerlessNabaztag"]
+	path = vendor/ServerlessNabaztag
+	url = https://github.com/uplg/ServerlessNabaztag.git

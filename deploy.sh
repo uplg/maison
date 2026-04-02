@@ -216,6 +216,9 @@ push_to_pi() {
   for relative_path in "${MUTABLE_RUNTIME_FILES[@]}"; do
     if [ -f "${ROOT_DIR}/${relative_path}" ]; then
       warn "Skipping push of mutable runtime file ${relative_path}; keeping remote state"
+      ## Enable on first deploy
+      #log "Pushing ${relative_path}"
+      #rsync_pi -avz "${ROOT_DIR}/${relative_path}" "${PI_HOST}:${PI_APP_DIR}/"
     fi
   done
 

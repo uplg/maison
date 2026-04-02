@@ -21,6 +21,8 @@ pub struct Config {
     pub hue_blacklist_path: PathBuf,
     pub zigbee_lamps_path: PathBuf,
     pub zigbee_lamps_blacklist_path: PathBuf,
+    pub nabaztag_config_path: PathBuf,
+    pub nabaztag_host: Option<String>,
     pub mqtt_host: String,
     pub mqtt_port: u16,
     pub mqtt_username: Option<String>,
@@ -75,6 +77,18 @@ impl Config {
         let zigbee_lamps_blacklist_path = env::var("ZIGBEE_LAMPS_BLACKLIST_JSON_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| source_root.join("zigbee-lamps-blacklist.json"));
+
+        let nabaztag_config_path = env::var("NABAZTAG_JSON_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| source_root.join("nabaztag.json"));
+
+        let nabaztag_host = env::var("NABAZTAG_HOST").ok().and_then(|value| {
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        });
 
         let disable_bluetooth = env::var("DISABLE_BLUETOOTH")
             .map(|value| {
@@ -164,6 +178,8 @@ impl Config {
             hue_blacklist_path,
             zigbee_lamps_path,
             zigbee_lamps_blacklist_path,
+            nabaztag_config_path,
+            nabaztag_host,
             mqtt_host,
             mqtt_port,
             mqtt_username,
@@ -195,6 +211,8 @@ impl Config {
             hue_blacklist_path: source_root.join("hue-lamps-blacklist.json"),
             zigbee_lamps_path: source_root.join("zigbee-lamps.json"),
             zigbee_lamps_blacklist_path: source_root.join("zigbee-lamps-blacklist.json"),
+            nabaztag_config_path: source_root.join("nabaztag.json"),
+            nabaztag_host: None,
             mqtt_host: "127.0.0.1".to_string(),
             mqtt_port: 1883,
             mqtt_username: None,

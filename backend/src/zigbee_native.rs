@@ -74,6 +74,11 @@ const PHILIPS_OUI_PREFIX: &str = "00:17:88";
 /// Manufacturer-specific cluster used by Philips Hue remotes for button
 /// notifications (`hueNotification` command).
 const PHILIPS_SPECIFIC_CLUSTER_ID: u16 = 0xFC00;
+/// Window during which duplicate remote power/brightness commands are suppressed.
+/// A single physical button press on a Philips Hue dimmer generates commands on
+/// both the standard ZCL cluster and the Philips-specific cluster; without
+/// deduplication the second one can hit lamps that changed state in between.
+const REMOTE_DEDUP_WINDOW: StdDuration = StdDuration::from_secs(3);
 const DEFAULT_STACK_PROFILE: u16 = 2;
 const DEFAULT_SECURITY_LEVEL: u16 = 5;
 const DEFAULT_NETWORK_CHANNEL: u8 = 11;
@@ -385,6 +390,13 @@ struct EzspContext {
     /// The coordinator's own EUI64, fetched once at startup.
     /// Needed for ZDO Bind_req destination addresses.
     coordinator_eui64: Option<Eui64>,
+    /// Deduplication for remote power commands: a single physical button press on
+    /// a Philips Hue dimmer generates commands on both the standard On/Off cluster
+    /// (0x0006) and the Philips-specific cluster (0xFC00).  We record the last
+    /// broadcast power action and its timestamp so the duplicate is suppressed.
+    last_remote_power: Option<(bool, Instant)>,
+    /// Same deduplication for brightness step commands.
+    last_remote_brightness_step: Option<(bool, Instant)>,
 }
 
 #[derive(Debug, Clone)]
@@ -800,6 +812,8 @@ async fn try_open_ezsp_context(
         next_device_sequence: HashMap::new(),
         last_activity: Instant::now(),
         coordinator_eui64: None,
+        last_remote_power: None,
+        last_remote_brightness_step: None,
     })
 }
 
@@ -1894,10 +1908,12 @@ async fn restore_desired_state(context: &mut EzspContext) {
 
     for (node_id, endpoint, desired_brightness, desired_temperature, supports_brightness, supports_temperature, was_on) in targets {
         // Restore brightness — but only if the lamp was supposed to be on.
-        // If the user turned the lamp off (e.g. via dimmer), sending a non-zero
-        // MoveToLevel would physically turn it back on.
+        // Never send MoveToLevel(0) here: if the lamp was turned off (e.g. via
+        // dimmer or wall switch), we should not re-send brightness 0 when it
+        // reappears — that would turn it off again immediately after a physical
+        // switch-on.
         if let Some(brightness) = desired_brightness {
-            if supports_brightness && (was_on || brightness == 0) {
+            if supports_brightness && was_on && brightness > 0 {
                 let sequence = next_device_sequence(context, node_id);
                 let zcl_payload = build_brightness_command_payload(brightness, sequence);
                 let aps_frame = EzspApsFrame::new(
@@ -2370,17 +2386,37 @@ async fn handle_remote_command(
         ON_OFF_CLUSTER_ID => {
             match command_id {
                 ZCL_ON_OFF_COMMAND_ON => {
+                    if let Some((true, ts)) = context.last_remote_power {
+                        if ts.elapsed() < REMOTE_DEDUP_WINDOW {
+                            debug!(
+                                remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                                "remote: suppressing duplicate ON (within dedup window)"
+                            );
+                            return;
+                        }
+                    }
                     info!(
                         remote_node_id = format_args!("0x{remote_node_id:04x}"),
                         "remote: ON button pressed — turning all lamps ON"
                     );
+                    context.last_remote_power = Some((true, Instant::now()));
                     broadcast_power_to_all_lamps(context, true).await;
                 }
                 ZCL_ON_OFF_COMMAND_OFF => {
+                    if let Some((false, ts)) = context.last_remote_power {
+                        if ts.elapsed() < REMOTE_DEDUP_WINDOW {
+                            debug!(
+                                remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                                "remote: suppressing duplicate OFF (within dedup window)"
+                            );
+                            return;
+                        }
+                    }
                     info!(
                         remote_node_id = format_args!("0x{remote_node_id:04x}"),
                         "remote: OFF button pressed — turning all lamps OFF"
                     );
+                    context.last_remote_power = Some((false, Instant::now()));
                     broadcast_power_to_all_lamps(context, false).await;
                 }
                 _ => {
@@ -2400,11 +2436,21 @@ async fn handle_remote_command(
                     if payload.len() > zcl_header_len {
                         let step_mode = payload[zcl_header_len];
                         let step_up = step_mode == 0x00;
+                        if let Some((last_up, ts)) = context.last_remote_brightness_step {
+                            if last_up == step_up && ts.elapsed() < REMOTE_DEDUP_WINDOW {
+                                debug!(
+                                    remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                                    "remote: suppressing duplicate brightness step (within dedup window)"
+                                );
+                                return;
+                            }
+                        }
                         info!(
                             remote_node_id = format_args!("0x{remote_node_id:04x}"),
                             direction = if step_up { "up" } else { "down" },
                             "remote: brightness step — adjusting all lamps"
                         );
+                        context.last_remote_brightness_step = Some((step_up, Instant::now()));
                         broadcast_brightness_step_to_all_lamps(context, step_up).await;
                     }
                 }
@@ -2414,11 +2460,21 @@ async fn handle_remote_command(
                     if payload.len() > zcl_header_len {
                         let move_mode = payload[zcl_header_len];
                         let step_up = move_mode == 0x00;
+                        if let Some((last_up, ts)) = context.last_remote_brightness_step {
+                            if last_up == step_up && ts.elapsed() < REMOTE_DEDUP_WINDOW {
+                                debug!(
+                                    remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                                    "remote: suppressing duplicate brightness move (within dedup window)"
+                                );
+                                return;
+                            }
+                        }
                         info!(
                             remote_node_id = format_args!("0x{remote_node_id:04x}"),
                             direction = if step_up { "up" } else { "down" },
                             "remote: brightness move — adjusting all lamps"
                         );
+                        context.last_remote_brightness_step = Some((step_up, Instant::now()));
                         broadcast_brightness_step_to_all_lamps(context, step_up).await;
                     }
                 }
@@ -2496,31 +2552,71 @@ async fn handle_remote_command(
 
             match button {
                 1 => {
+                    if let Some((true, ts)) = context.last_remote_power {
+                        if ts.elapsed() < REMOTE_DEDUP_WINDOW {
+                            debug!(
+                                remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                                "remote: suppressing duplicate hue ON (within dedup window)"
+                            );
+                            return;
+                        }
+                    }
                     info!(
                         remote_node_id = format_args!("0x{remote_node_id:04x}"),
                         "remote: hue ON button — turning all lamps ON"
                     );
+                    context.last_remote_power = Some((true, Instant::now()));
                     broadcast_power_to_all_lamps(context, true).await;
                 }
                 4 => {
+                    if let Some((false, ts)) = context.last_remote_power {
+                        if ts.elapsed() < REMOTE_DEDUP_WINDOW {
+                            debug!(
+                                remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                                "remote: suppressing duplicate hue OFF (within dedup window)"
+                            );
+                            return;
+                        }
+                    }
                     info!(
                         remote_node_id = format_args!("0x{remote_node_id:04x}"),
                         "remote: hue OFF button — turning all lamps OFF"
                     );
+                    context.last_remote_power = Some((false, Instant::now()));
                     broadcast_power_to_all_lamps(context, false).await;
                 }
                 2 => {
+                    if let Some((true, ts)) = context.last_remote_brightness_step {
+                        if ts.elapsed() < REMOTE_DEDUP_WINDOW {
+                            debug!(
+                                remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                                "remote: suppressing duplicate hue DIM UP (within dedup window)"
+                            );
+                            return;
+                        }
+                    }
                     info!(
                         remote_node_id = format_args!("0x{remote_node_id:04x}"),
                         "remote: hue DIM UP — increasing brightness"
                     );
+                    context.last_remote_brightness_step = Some((true, Instant::now()));
                     broadcast_brightness_step_to_all_lamps(context, true).await;
                 }
                 3 => {
+                    if let Some((false, ts)) = context.last_remote_brightness_step {
+                        if ts.elapsed() < REMOTE_DEDUP_WINDOW {
+                            debug!(
+                                remote_node_id = format_args!("0x{remote_node_id:04x}"),
+                                "remote: suppressing duplicate hue DIM DOWN (within dedup window)"
+                            );
+                            return;
+                        }
+                    }
                     info!(
                         remote_node_id = format_args!("0x{remote_node_id:04x}"),
                         "remote: hue DIM DOWN — decreasing brightness"
                     );
+                    context.last_remote_brightness_step = Some((false, Instant::now()));
                     broadcast_brightness_step_to_all_lamps(context, false).await;
                 }
                 _ => {
@@ -2586,12 +2682,6 @@ async fn broadcast_power_to_all_lamps(context: &mut EzspContext, enabled: bool) 
             Ok(_) => {
                 if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == lamp_node_id) {
                     device.is_on = enabled;
-                    // When the dimmer turns a lamp OFF, clear desired_brightness so
-                    // that restore_desired_state does not accidentally re-send the
-                    // previous brightness level (which would turn the lamp back on).
-                    if !enabled {
-                        device.desired_brightness = Some(0);
-                    }
                 }
                 debug!(
                     lamp_node_id = format_args!("0x{lamp_node_id:04x}"),

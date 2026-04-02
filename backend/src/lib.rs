@@ -9,6 +9,7 @@ pub mod hue;
 pub mod hue;
 pub mod meross;
 pub mod mitsubishi_ir;
+pub mod nabaztag;
 pub mod routes;
 pub mod tempo;
 pub mod tuya;
@@ -25,6 +26,7 @@ use broadlink::BroadlinkManager;
 use config::Config;
 use error::AppError;
 use hue::HueManager;
+use nabaztag::NabaztagManager;
 use tower_http::services::{ServeDir, ServeFile};
 use routes::auth::{load_users, SharedUsers};
 use meross::MerossManager;
@@ -40,6 +42,7 @@ pub struct AppState {
     pub(crate) broadlink: BroadlinkManager,
     pub(crate) hue: HueManager,
     pub(crate) meross: MerossManager,
+    pub(crate) nabaztag: NabaztagManager,
     pub(crate) tempo: TempoService,
     pub(crate) tuya: TuyaManager,
     pub(crate) zigbee: ZigbeeManager,
@@ -66,6 +69,10 @@ pub fn build_app_parts_from_config(config: Arc<Config>) -> Result<(Router, AppSt
     let broadlink = BroadlinkManager::new(&config.broadlink_codes_path)?;
     let hue = HueManager::new(config.as_ref())?;
     let meross = MerossManager::new(&config.meross_devices_path)?;
+    let nabaztag = NabaztagManager::new(
+        &config.nabaztag_config_path,
+        config.nabaztag_host.as_deref(),
+    )?;
     let tempo = TempoService::new(config.source_root.clone())?;
     let tuya = TuyaManager::new(&config.devices_path, &config.device_cache_path)?;
     let zigbee = ZigbeeManager::new(config.as_ref())?;
@@ -77,6 +84,7 @@ pub fn build_app_parts_from_config(config: Arc<Config>) -> Result<(Router, AppSt
         broadlink,
         hue,
         meross,
+        nabaztag,
         tempo,
         tuya,
         zigbee,
@@ -107,6 +115,7 @@ pub fn build_app(state: AppState) -> Router {
         .nest("/devices", routes::devices::router())
         .nest("/hue-lamps", routes::hue::router())
         .nest("/meross", routes::meross::router())
+        .nest("/nabaztag", routes::nabaztag::router())
         .nest("/tempo", routes::tempo::router())
         .nest("/zigbee", routes::zigbee::router());
 

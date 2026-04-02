@@ -822,3 +822,209 @@ export interface TempoCalibrationData {
   error?: string;
   message?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Nabaztag types
+// ---------------------------------------------------------------------------
+
+export interface NabaztagConfig {
+  host: string;
+  name: string;
+  tempoEnabled: boolean;
+}
+
+export interface NabaztagConfigResponse {
+  success: boolean;
+  config: NabaztagConfig;
+  message: string;
+}
+
+export interface NabaztagStatus {
+  raw: Record<string, unknown>;
+}
+
+export interface NabaztagStatusResponse {
+  success: boolean;
+  status: NabaztagStatus;
+  message: string;
+}
+
+export interface NabaztagSimpleResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface NabaztagEarPosition {
+  left: number;
+  right: number;
+}
+
+export interface NabaztagEarsResponse {
+  success: boolean;
+  ears: NabaztagEarPosition;
+  message: string;
+}
+
+export interface NabaztagForthResponse {
+  success: boolean;
+  output: string;
+  message: string;
+}
+
+export interface NabaztagAnimationsResponse {
+  success: boolean;
+  animations: unknown;
+  message: string;
+}
+
+export interface NabaztagTasksResponse {
+  success: boolean;
+  tasks: unknown;
+  message: string;
+}
+
+export interface NabaztagTempoLedMapping {
+  color: string;
+  nose: string;
+  left: string;
+  center: string;
+  right: string;
+  base: string;
+}
+
+export interface NabaztagTempoPushResult {
+  todayColor: string;
+  tomorrowColor: string | null;
+  todayLeds: NabaztagTempoLedMapping;
+  tomorrowLeds: NabaztagTempoLedMapping | null;
+  earLeftPosition: number;
+  earRightPosition: number;
+}
+
+export interface NabaztagTempoPushResponse {
+  success: boolean;
+  result: NabaztagTempoPushResult;
+  message: string;
+}
+
+export interface NabaztagLedColors {
+  nose?: string;
+  left?: string;
+  center?: string;
+  right?: string;
+  base?: string;
+  breathing?: boolean;
+}
+
+export interface NabaztagEarMoveRequest {
+  ear: number;
+  position: number;
+  direction?: number;
+}
+
+export interface NabaztagSetupRequest {
+  latitude?: string;
+  longitude?: string;
+  language?: string;
+  taichi?: number;
+  cityCode?: string;
+  dst?: number;
+  wakeUp?: number;
+  goToBed?: number;
+}
+
+export interface NabaztagInfoServiceRequest {
+  service: string;
+  value: number;
+}
+
+// Nabaztag API
+export const nabaztagApi = {
+  // Configuration
+  getConfig: () => api<NabaztagConfigResponse>("/nabaztag/config"),
+
+  updateConfig: (config: NabaztagConfig) =>
+    api<NabaztagConfigResponse>("/nabaztag/config", {
+      method: "POST",
+      body: config,
+    }),
+
+  // Status
+  getStatus: () => api<NabaztagStatusResponse>("/nabaztag/status"),
+
+  // Sleep / Wake
+  sleep: () => api<NabaztagSimpleResponse>("/nabaztag/sleep", { method: "POST" }),
+  wakeup: () => api<NabaztagSimpleResponse>("/nabaztag/wakeup", { method: "POST" }),
+
+  // Ears
+  getEars: () => api<NabaztagEarsResponse>("/nabaztag/ears"),
+  moveEar: (req: NabaztagEarMoveRequest) =>
+    api<NabaztagSimpleResponse>("/nabaztag/ears", {
+      method: "POST",
+      body: req,
+    }),
+
+  // LEDs
+  setLeds: (colors: NabaztagLedColors) =>
+    api<NabaztagSimpleResponse>("/nabaztag/leds", {
+      method: "POST",
+      body: colors,
+    }),
+  clearLeds: () => api<NabaztagSimpleResponse>("/nabaztag/leds/clear", { method: "POST" }),
+
+  // Sound
+  playUrl: (url: string) =>
+    api<NabaztagSimpleResponse>("/nabaztag/play", {
+      method: "POST",
+      body: { url },
+    }),
+  say: (text: string) =>
+    api<NabaztagSimpleResponse>("/nabaztag/say", {
+      method: "POST",
+      body: { text },
+    }),
+  soundCommunication: () =>
+    api<NabaztagSimpleResponse>("/nabaztag/sound/communication", { method: "POST" }),
+  soundAck: () => api<NabaztagSimpleResponse>("/nabaztag/sound/ack", { method: "POST" }),
+  soundAbort: () => api<NabaztagSimpleResponse>("/nabaztag/sound/abort", { method: "POST" }),
+  soundMinistop: () =>
+    api<NabaztagSimpleResponse>("/nabaztag/sound/ministop", { method: "POST" }),
+  stop: () => api<NabaztagSimpleResponse>("/nabaztag/stop", { method: "POST" }),
+
+  // Info services
+  setInfoService: (req: NabaztagInfoServiceRequest) =>
+    api<NabaztagSimpleResponse>("/nabaztag/info", {
+      method: "POST",
+      body: req,
+    }),
+  clearInfo: () => api<NabaztagSimpleResponse>("/nabaztag/info/clear", { method: "POST" }),
+
+  // Utility
+  taichi: () => api<NabaztagSimpleResponse>("/nabaztag/taichi", { method: "POST" }),
+  surprise: () => api<NabaztagSimpleResponse>("/nabaztag/surprise", { method: "POST" }),
+  reboot: () => api<NabaztagSimpleResponse>("/nabaztag/reboot", { method: "POST" }),
+  updateTime: () => api<NabaztagSimpleResponse>("/nabaztag/update-time", { method: "POST" }),
+  getAnimations: () => api<NabaztagAnimationsResponse>("/nabaztag/animations"),
+  getTasks: () => api<NabaztagTasksResponse>("/nabaztag/tasks"),
+
+  // Setup
+  setup: (req: NabaztagSetupRequest) =>
+    api<NabaztagSimpleResponse>("/nabaztag/setup", {
+      method: "POST",
+      body: req,
+    }),
+
+  // Forth interpreter
+  executeForth: (code: string) =>
+    api<NabaztagForthResponse>("/nabaztag/forth", {
+      method: "POST",
+      body: { code },
+    }),
+
+  // Tempo integration
+  pushTempo: (forceRefresh = false) =>
+    api<NabaztagTempoPushResponse>("/nabaztag/tempo/push", {
+      method: "POST",
+      body: { forceRefresh },
+    }),
+};
