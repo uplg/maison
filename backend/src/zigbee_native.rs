@@ -1874,7 +1874,7 @@ async fn drain_pending_callbacks(context: &mut EzspContext) {
 /// **IMPORTANT**: no `timeout()` wrapper — see [`run_liveness_probes`] doc comment.
 async fn restore_desired_state(context: &mut EzspContext) {
     // Collect targets: devices that are reachable, have an endpoint, and have unapplied desired state.
-    let targets: Vec<(u16, u8, Option<u8>, Option<u8>, bool, bool)> = context
+    let targets: Vec<(u16, u8, Option<u8>, Option<u8>, bool, bool, bool)> = context
         .joined_devices
         .iter()
         .filter(|d| d.reachable && !d.desired_state_applied && d.endpoint.is_some())
@@ -1887,14 +1887,17 @@ async fn restore_desired_state(context: &mut EzspContext) {
                 d.desired_temperature,
                 d.supports_brightness,
                 d.supports_temperature,
+                d.is_on,
             )
         })
         .collect();
 
-    for (node_id, endpoint, desired_brightness, desired_temperature, supports_brightness, supports_temperature) in targets {
-        // Restore brightness
+    for (node_id, endpoint, desired_brightness, desired_temperature, supports_brightness, supports_temperature, was_on) in targets {
+        // Restore brightness — but only if the lamp was supposed to be on.
+        // If the user turned the lamp off (e.g. via dimmer), sending a non-zero
+        // MoveToLevel would physically turn it back on.
         if let Some(brightness) = desired_brightness {
-            if supports_brightness {
+            if supports_brightness && (was_on || brightness == 0) {
                 let sequence = next_device_sequence(context, node_id);
                 let zcl_payload = build_brightness_command_payload(brightness, sequence);
                 let aps_frame = EzspApsFrame::new(
@@ -2583,6 +2586,12 @@ async fn broadcast_power_to_all_lamps(context: &mut EzspContext, enabled: bool) 
             Ok(_) => {
                 if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == lamp_node_id) {
                     device.is_on = enabled;
+                    // When the dimmer turns a lamp OFF, clear desired_brightness so
+                    // that restore_desired_state does not accidentally re-send the
+                    // previous brightness level (which would turn the lamp back on).
+                    if !enabled {
+                        device.desired_brightness = Some(0);
+                    }
                 }
                 debug!(
                     lamp_node_id = format_args!("0x{lamp_node_id:04x}"),
