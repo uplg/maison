@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration as StdDuration};
 use ashv2::{Actor as AshActor, BaudRate, FlowControl, NativeSerialPort, Payload, Tasks as AshTasks, open as open_ash_serial};
 use chrono::Utc;
 use ezsp::{
-    Callback, Configuration, Ezsp, Messaging, Networking, Security, Utilities,
+    Callback, Configuration, Ezsp, Messaging, Networking, Security, Utilities, Zll,
     ember::{
         Eui64, NodeId,
         aps::{Frame as EzspApsFrame, Options as EzspApsOptions},
@@ -14,8 +14,9 @@ use ezsp::{
         network::{Duration as NetworkDuration, Parameters as EmberNetworkParameters, Status as EmberNetworkStatus},
         node::Type as EmberNodeType,
         security::initial,
+        zll::{self, InitialSecurityState as ZllInitialSecurityState, Network as ZllNetwork},
     },
-    ezsp::{config, decision, network::InitBitmask as NetworkInitBitmask, policy, value},
+    ezsp::{config, decision, network::InitBitmask as NetworkInitBitmask, policy, value, zll::NetworkOperation as ZllNetworkOperation},
     parameters,
     uart::Uart as EzspUart,
 };
@@ -68,9 +69,6 @@ const ZCL_LEVEL_CONTROL_COMMAND_STOP_WITH_ON_OFF: u8 = 0x07;
 
 /// Brightness step applied per dimmer button press (in percentage points, 0–100 scale).
 const DIMMER_BRIGHTNESS_STEP: u8 = 15;
-/// Philips Lighting OUI prefix (used for EUI64-based remote detection).
-/// Philips Hue remotes/dimmers have EUI64s starting with 00:17:88.
-const PHILIPS_OUI_PREFIX: &str = "00:17:88";
 /// Manufacturer-specific cluster used by Philips Hue remotes for button
 /// notifications (`hueNotification` command).
 const PHILIPS_SPECIFIC_CLUSTER_ID: u16 = 0xFC00;
@@ -86,6 +84,26 @@ const DEFAULT_NETWORK_TX_POWER: u8 = 8;
 const DEFAULT_LOCAL_INPUT_CLUSTERS: &[u16] = &[0x0000, 0x0006, 0x0008, 0x0300, 0x0403, 0x0201, 0xFC00];
 const DEFAULT_LOCAL_OUTPUT_CLUSTERS: &[u16] = &[0x0000, 0x0006, 0x0008, 0x0300, 0x0403];
 const ZIGBEE_ALLIANCE09_LINK_KEY: EmberKeyData = *b"ZigBeeAlliance09";
+
+/// ZLL (Touchlink) constants.
+/// EZSP policy decision: enable ZLL message processing.
+const ZLL_POLICY_ENABLED: u8 = 0x00;
+/// Primary channel mask for ZLL Touchlink scan (channels 11, 15, 20, 25).
+const ZLL_PRIMARY_CHANNEL_MASK: u32 = (1 << 11) | (1 << 15) | (1 << 20) | (1 << 25);
+/// Extended channel mask: all Zigbee channels 11–26 (fallback if primary scan finds nothing).
+const ZLL_ALL_CHANNELS_MASK: u32 = 0x07FFF800;
+/// ZLL master encryption key (shared by all ZLL certified devices).
+/// This is the well-known "ZigBee Light Link Master Key" used to decrypt the
+/// network key during Touchlink commissioning.
+const ZLL_MASTER_KEY: [u8; 16] = [
+    0x9F, 0x55, 0x95, 0xF1, 0x02, 0x57, 0xC8, 0xA4,
+    0x69, 0xCB, 0xF4, 0x2B, 0xC9, 0x3F, 0xEE, 0x31,
+];
+/// ZLL InitialSecurityState bitmask — reserved for future use per EZSP docs.
+const ZLL_SECURITY_KEY_BITMASK: u32 = 0;
+
+/// Maximum time to wait for a Touchlink scan to complete.
+const TOUCHLINK_SCAN_TIMEOUT: StdDuration = StdDuration::from_secs(15);
 
 /// Zigbee device type classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,6 +145,10 @@ pub enum NativeZigbeeCommand {
     SetPower { lamp_id: String, enabled: bool },
     SetBrightness { lamp_id: String, brightness: u8 },
     SetTemperature { lamp_id: String, temperature: u8 },
+    /// Initiate a Touchlink (ZLL) scan to discover and commission factory-new
+    /// ZLL devices (e.g. Hue Lightstrip Plus) that don't respond to standard
+    /// NWK-level permit-join.
+    TouchlinkScan,
 }
 
 #[derive(Debug, Clone)]
@@ -397,6 +419,22 @@ struct EzspContext {
     last_remote_power: Option<(bool, Instant)>,
     /// Same deduplication for brightness step commands.
     last_remote_brightness_step: Option<(bool, Instant)>,
+    /// Touchlink scan state: collects ZLL networks found during a scan.
+    touchlink_found_networks: Vec<TouchlinkFoundNetwork>,
+    /// Set to `true` while a Touchlink scan is in progress, `false` when ScanComplete fires.
+    touchlink_scan_in_progress: bool,
+}
+
+/// A ZLL device discovered during a Touchlink scan.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // fields retained for future diagnostics/logging
+struct TouchlinkFoundNetwork {
+    network_info: ZllNetwork,
+    device_endpoint: Option<u8>,
+    device_profile_id: Option<u16>,
+    device_id: Option<u16>,
+    device_eui64: Option<Eui64>,
+    rssi: i8,
 }
 
 #[derive(Debug, Clone)]
@@ -814,6 +852,8 @@ async fn try_open_ezsp_context(
         coordinator_eui64: None,
         last_remote_power: None,
         last_remote_brightness_step: None,
+        touchlink_found_networks: Vec::new(),
+        touchlink_scan_in_progress: false,
     })
 }
 
@@ -881,10 +921,11 @@ async fn ensure_coordinator_network(
         // policies set in configure_stack() are the ones that matter for join
         // behavior.
         info!(serial_port = %serial_port, "refreshing trust center security state on existing network");
-        match context
-            .uart
-            .set_initial_security_state(build_initial_security_state())
-            .await
+        match ezsp::Security::set_initial_security_state(
+            &mut context.uart,
+            build_initial_security_state(),
+        )
+        .await
         {
             Ok(()) => info!("trust center security state refreshed successfully"),
             Err(error) => warn!(
@@ -1061,6 +1102,15 @@ async fn configure_stack(context: &mut EzspContext) -> Result<(), AppError> {
         )
         .await
         .map_err(map_ezsp_error("set message contents callback policy"))?;
+
+    // Enable ZLL (Touchlink) message processing on the stack so that
+    // Touchlink scan requests and responses are handled by the NCP.
+    context
+        .uart
+        .set_policy(policy::Id::Zll, ZLL_POLICY_ENABLED)
+        .await
+        .map_err(map_ezsp_error("enable ZLL policy"))?;
+
     Ok(())
 }
 
@@ -1092,11 +1142,12 @@ async fn form_coordinator_network(context: &mut EzspContext) -> Result<(), AppEr
         "forming Zigbee coordinator network"
     );
 
-    context
-        .uart
-        .set_initial_security_state(build_initial_security_state())
-        .await
-        .map_err(map_ezsp_error("set initial security state"))?;
+    ezsp::Security::set_initial_security_state(
+        &mut context.uart,
+        build_initial_security_state(),
+    )
+    .await
+    .map_err(map_ezsp_error("set initial security state"))?;
 
     context
         .uart
@@ -1502,7 +1553,172 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
 
             Ok(())
         }
+        NativeZigbeeCommand::TouchlinkScan => {
+            touchlink_scan(context).await
+        }
     }
+}
+
+/// Perform a Touchlink (ZLL) scan and commission any found devices onto the
+/// current Zigbee network.
+///
+/// Touchlink is required for factory-new ZLL devices (e.g. Hue Lightstrip Plus)
+/// that do not respond to standard NWK-level `permit_join`.  The flow is:
+///
+/// 1. Set ZLL initial security state (master key + key index).
+/// 2. Start a Touchlink scan on the primary ZLL channels.
+/// 3. Wait for `NetworkFound` callbacks (one per discovered ZLL device).
+/// 4. Wait for `ScanComplete` callback.
+/// 5. For each found device, issue `network_ops(JoinTarget)` to tell it to
+///    join our network.  The device will then appear via the normal
+///    `TrustCenterJoin` / `ChildJoin` path.
+async fn touchlink_scan(context: &mut EzspContext) -> Result<(), AppError> {
+    info!("touchlink: starting ZLL Touchlink scan");
+
+    // --- 1. Configure ZLL security state ---
+    // We use the ZLL Master key (KeyIndex::Master = 0x04).
+    // The encryption_key is the ZLL master key that will be used by the NCP
+    // to encrypt the network key transport during commissioning.
+    // The preconfigured_key is left zeroed — not needed for initiator mode.
+    //
+    // NOTE: We use `set_security_state_without_key` instead of
+    // `set_initial_security_state` because the latter can only be called
+    // *before* the network is formed, and our coordinator already has a
+    // running network.  `set_security_state_without_key` updates the ZLL
+    // security token on an established network without requiring a separate
+    // network_key argument (the NCP already knows its own network key).
+    let zll_security = ZllInitialSecurityState::new(
+        ZLL_SECURITY_KEY_BITMASK,
+        zll::KeyIndex::Master,
+        ZLL_MASTER_KEY,
+        [0u8; 16], // preconfigured_key — unused for initiator
+    );
+
+    ezsp::Zll::set_security_state_without_key(
+        &mut context.uart,
+        zll_security,
+    )
+    .await
+    .map_err(map_ezsp_error("set ZLL security state"))?;
+    info!("touchlink: ZLL security state configured (master key)");
+
+    // --- 2. Set the channel mask for the scan ---
+    context
+        .uart
+        .set_primary_channel_mask(ZLL_PRIMARY_CHANNEL_MASK)
+        .await
+        .map_err(map_ezsp_error("set ZLL primary channel mask"))?;
+    info!(
+        channel_mask = format_args!("0x{ZLL_PRIMARY_CHANNEL_MASK:08x}"),
+        "touchlink: primary channel mask set"
+    );
+
+    // --- 3. Scan: first primary ZLL channels, then all channels if nothing found ---
+    // Use maximum TX power (20 dBm) for Touchlink — the protocol relies on
+    // RSSI-based proximity detection so we want the strongest possible signal.
+    const TOUCHLINK_TX_POWER: i8 = 20;
+
+    context.touchlink_found_networks.clear();
+    context.touchlink_scan_in_progress = true;
+
+    let channel_passes: &[(&str, u32)] = &[
+        ("primary ZLL (11,15,20,25)", ZLL_PRIMARY_CHANNEL_MASK),
+        ("all Zigbee (11-26)", ZLL_ALL_CHANNELS_MASK),
+    ];
+
+    for (label, channel_mask) in channel_passes {
+        context.touchlink_found_networks.clear();
+        context.touchlink_scan_in_progress = true;
+
+        info!(
+            channels = label,
+            channel_mask = format_args!("0x{channel_mask:08x}"),
+            tx_power = TOUCHLINK_TX_POWER,
+            "touchlink: starting scan pass"
+        );
+
+        ezsp::Zll::start_scan(
+            &mut context.uart,
+            *channel_mask,
+            TOUCHLINK_TX_POWER,
+            EmberNodeType::Coordinator,
+        )
+        .await
+        .map_err(map_ezsp_error("start ZLL Touchlink scan"))?;
+
+        // Wait for ScanComplete callback or timeout
+        let scan_deadline = Instant::now() + TOUCHLINK_SCAN_TIMEOUT;
+        while context.touchlink_scan_in_progress && Instant::now() < scan_deadline {
+            while let Ok(callback) = context.callbacks_rx.try_recv() {
+                context.last_activity = Instant::now();
+                let _ = handle_callback(context, callback).await;
+            }
+            tokio::time::sleep(StdDuration::from_millis(50)).await;
+        }
+
+        if context.touchlink_scan_in_progress {
+            warn!(channels = label, "touchlink: scan timed out after {:?}", TOUCHLINK_SCAN_TIMEOUT);
+            context.touchlink_scan_in_progress = false;
+        }
+
+        let found_count = context.touchlink_found_networks.len();
+        info!(found_count, channels = label, "touchlink: scan pass complete");
+
+        if found_count > 0 {
+            break; // Found devices, skip remaining passes
+        }
+    }
+
+    let found_count = context.touchlink_found_networks.len();
+    if found_count == 0 {
+        info!("touchlink: no ZLL devices found on any channel");
+        return Ok(());
+    }
+
+    // --- 4. Commission each found device: tell it to join our network ---
+    let found_networks = context.touchlink_found_networks.drain(..).collect::<Vec<_>>();
+    for (i, found) in found_networks.iter().enumerate() {
+        let eui64 = found.network_info.eui64();
+        info!(
+            index = i,
+            eui64 = %format_eui64(eui64),
+            rssi = found.rssi,
+            device_id = ?found.device_id,
+            endpoint = ?found.device_endpoint,
+            "touchlink: commissioning ZLL device (JoinTarget)"
+        );
+
+        match context
+            .uart
+            .network_ops(found.network_info.clone(), ZllNetworkOperation::JoinTarget, TOUCHLINK_TX_POWER)
+            .await
+        {
+            Ok(()) => {
+                info!(
+                    eui64 = %format_eui64(eui64),
+                    "touchlink: JoinTarget command sent successfully — device should join the network"
+                );
+                // Give the device time to process the join and send its
+                // TrustCenterJoin / ChildJoin / Device Announce.
+                tokio::time::sleep(StdDuration::from_secs(2)).await;
+                // Drain any join-related callbacks that arrived.
+                while let Ok(callback) = context.callbacks_rx.try_recv() {
+                    context.last_activity = Instant::now();
+                    let _ = handle_callback(context, callback).await;
+                }
+            }
+            Err(error) => {
+                warn!(
+                    eui64 = %format_eui64(eui64),
+                    error = %error,
+                    "touchlink: JoinTarget failed for device"
+                );
+            }
+        }
+    }
+
+    info!(commissioned = found_networks.len(), "touchlink: commissioning complete");
+    Ok(())
 }
 
 fn find_target_device(context: &EzspContext, lamp_id: &str) -> Result<DiscoveredDevice, AppError> {
@@ -1609,34 +1825,30 @@ async fn handle_callback(context: &mut EzspContext, callback: Callback) -> Optio
                     ensure_joined_device(context, node_id, eui64.clone());
 
                     if is_sleepy {
-                        // Sleepy end devices (remotes, sensors) never respond
-                        // to ZDO requests.  Classify them immediately as
-                        // remotes — they will send us ZCL commands when the
-                        // user presses a button, confirming their role.
+                        // Sleepy end devices are typically remotes/sensors that
+                        // never respond to ZDO requests.  However, some ZLL
+                        // devices (e.g. Hue Lightstrip after Touchlink) may
+                        // report as SleepyEndDevice while actually being a lamp.
+                        //
+                        // Strategy: still attempt ZDO discovery first.  If the
+                        // device does not respond, the intercept-on-wake logic
+                        // in handle_incoming_cluster will auto-classify it as
+                        // Remote when it sends its first ZCL command.
                         let already_classified = context.joined_devices.iter()
-                            .any(|d| d.node_id == node_id && d.device_type == ZigbeeDeviceType::Remote);
+                            .any(|d| d.node_id == node_id && d.interview_completed);
                         if already_classified {
                             debug!(
                                 node_id = format_args!("0x{node_id:04x}"),
                                 eui64 = %eui64,
-                                "sleepy end device already classified as remote in TrustCenterJoin — skipping duplicate bind"
+                                "sleepy end device already interviewed — skipping re-discovery"
                             );
                         } else {
                             info!(
                                 node_id = format_args!("0x{node_id:04x}"),
                                 eui64 = %eui64,
-                                "sleepy end device joined — classifying as remote (skipping ZDO interview)"
+                                "sleepy end device joined — attempting ZDO discovery before classifying"
                             );
-                            if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
-                                device.device_type = ZigbeeDeviceType::Remote;
-                                device.endpoint = Some(1);
-                                device.output_clusters = vec![ON_OFF_CLUSTER_ID, LEVEL_CONTROL_CLUSTER_ID];
-                                device.interview_completed = true;
-                                device.supports_brightness = false;
-                                device.supports_temperature = false;
-                                device.has_color_control_cluster = false;
-                            }
-                            bind_remote_clusters(context, node_id, &eui64).await;
+                            request_known_device_discovery(context, node_id).await;
                         }
                     } else {
                         request_known_device_discovery(context, node_id).await;
@@ -1670,7 +1882,79 @@ async fn handle_callback(context: &mut EzspContext, callback: Callback) -> Optio
             }
             _ => None,
         },
+        Callback::Zll(handler) => {
+            handle_zll_callback(context, handler);
+            None
+        }
         _ => None,
+    }
+}
+
+/// Handle ZLL (Touchlink) callbacks from the EZSP stack.
+fn handle_zll_callback(context: &mut EzspContext, handler: parameters::zll::handler::Handler) {
+    match handler {
+        parameters::zll::handler::Handler::NetworkFound(found) => {
+            let network = found.network_info();
+            let eui64 = network.eui64();
+            let rssi = found.last_hop_rssi();
+            let device_info = found.device_info();
+
+            info!(
+                eui64 = %format_eui64(eui64),
+                rssi,
+                node_id = format_args!("0x{:04x}", u16::from(network.node_id())),
+                number_sub_devices = network.number_sub_devices(),
+                "touchlink: ZLL device found during scan"
+            );
+
+            let (device_endpoint, device_profile_id, device_id, device_eui64) =
+                if let Some(info) = device_info {
+                    info!(
+                        endpoint = info.endpoint_id(),
+                        profile_id = format_args!("0x{:04x}", info.profile_id()),
+                        device_id = format_args!("0x{:04x}", info.device_id()),
+                        device_eui64 = %format_eui64(info.ieee_address()),
+                        "touchlink: device info available"
+                    );
+                    (
+                        Some(info.endpoint_id()),
+                        Some(info.profile_id()),
+                        Some(info.device_id()),
+                        Some(info.ieee_address()),
+                    )
+                } else {
+                    debug!("touchlink: no device info in NetworkFound callback");
+                    (None, None, None, None)
+                };
+
+            context.touchlink_found_networks.push(TouchlinkFoundNetwork {
+                network_info: network.clone(),
+                device_endpoint,
+                device_profile_id,
+                device_id,
+                device_eui64,
+                rssi,
+            });
+        }
+        parameters::zll::handler::Handler::ScanComplete(scan) => {
+            let status = scan.result();
+            info!(?status, found_count = context.touchlink_found_networks.len(), "touchlink: scan complete");
+            context.touchlink_scan_in_progress = false;
+        }
+        parameters::zll::handler::Handler::AddressAssignment(assignment) => {
+            let addr = assignment.address_info();
+            info!(
+                node_id = format_args!("0x{:04x}", u16::from(addr.node_id_())),
+                "touchlink: address assignment received"
+            );
+        }
+        parameters::zll::handler::Handler::TouchLinkTarget(target) => {
+            let network = target.network_info();
+            info!(
+                eui64 = %format_eui64(network.eui64()),
+                "touchlink: TouchLinkTarget callback (we are being touchlinked by another device)"
+            );
+        }
     }
 }
 
@@ -1694,29 +1978,17 @@ async fn handle_trust_center_join(
             );
             ensure_joined_device(context, node_id, eui64.clone());
 
-            if is_known_remote_oui(&eui64) {
-                // Philips (and similar) remotes are sleepy end devices that
-                // never respond to ZDO requests.  Classify immediately.
-                info!(
-                    node_id = format_args!("0x{node_id:04x}"),
-                    eui64 = %eui64,
-                    "known remote OUI detected at TrustCenterJoin — classifying as remote (skipping ZDO interview)"
-                );
-                if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
-                    device.device_type = ZigbeeDeviceType::Remote;
-                    device.endpoint = Some(1);
-                    device.output_clusters = vec![ON_OFF_CLUSTER_ID, LEVEL_CONTROL_CLUSTER_ID];
-                    device.interview_completed = true;
-                    device.supports_brightness = false;
-                    device.supports_temperature = false;
-                    device.has_color_control_cluster = false;
-                }
-                // The remote just joined — it's briefly awake.  Send ZDO
-                // Bind_req now so it knows to send button-press commands to us.
-                bind_remote_clusters(context, node_id, &eui64).await;
-            } else {
-                request_known_device_discovery(context, node_id).await;
-            }
+            // NOTE: We intentionally do NOT classify devices by OUI here.
+            // The ChildJoin callback (which fires separately) already handles
+            // the sleepy-vs-router distinction correctly.  Classifying all
+            // Philips devices as remotes here would prevent Philips lamps
+            // (Lightstrip Plus, etc.) from being discovered.
+            //
+            // For non-sleepy devices (lamps/routers), ChildJoin triggers ZDO
+            // discovery.  For sleepy devices (remotes), ChildJoin classifies
+            // them as Remote immediately.  TrustCenterJoin just ensures the
+            // device is in the joined_devices list.
+            request_known_device_discovery(context, node_id).await;
 
             Some(NativeZigbeeEvent::DeviceJoined { node_id, eui64 })
         }
@@ -2786,6 +3058,20 @@ async fn handle_incoming_cluster(
         .iter()
         .any(|device| device.node_id == node_id && device.endpoint.is_none());
 
+    // Debug: log the current classification of this device so we can trace
+    // unexpected Remote classifications.
+    if let Some(device) = context.joined_devices.iter().find(|d| d.node_id == node_id) {
+        debug!(
+            node_id = format_args!("0x{node_id:04x}"),
+            cluster_id = format_args!("0x{cluster_id:04x}"),
+            device_type = ?device.device_type,
+            endpoint = ?device.endpoint,
+            interview_completed = device.interview_completed,
+            needs_interview,
+            "incoming message: device state at dispatch time"
+        );
+    }
+
     if needs_interview {
         let is_light_cluster = cluster_id == ON_OFF_CLUSTER_ID || cluster_id == LEVEL_CONTROL_CLUSTER_ID;
         let is_philips_cluster = cluster_id == PHILIPS_SPECIFIC_CLUSTER_ID;
@@ -2837,16 +3123,33 @@ async fn handle_incoming_cluster(
         .any(|device| device.node_id == node_id && device.device_type == ZigbeeDeviceType::Remote);
 
     if sender_is_remote {
-        // Skip ZDO frames (Device Announce, Bind Response, etc.) — they are
+        // Skip ZDO frames (Bind Response, etc.) — they are
         // not ZCL commands.  ZDO request cluster IDs are 0x0000..0x00FF and
         // response cluster IDs are 0x8000..0x80FF.
+        // EXCEPTION: Device_annce (0x0013) is always processed — a device that
+        // was previously classified as remote might have been factory-reset and
+        // re-joined as a different device type.  We let it fall through to the
+        // main match block so it gets proper ZDO handling (re-interview etc.).
         let is_zdo = cluster_id <= 0x00FF || (0x8000..=0x80FF).contains(&cluster_id);
-        if is_zdo {
+        let is_device_announce = cluster_id == DEVICE_ANNCE_CLUSTER_ID;
+        if is_device_announce {
+            info!(
+                node_id = format_args!("0x{node_id:04x}"),
+                cluster_id = format_args!("0x{cluster_id:04x}"),
+                "Device_annce from remote-classified device — falling through to ZDO handler for re-interview"
+            );
+            // Do NOT return — fall through to the main match block below.
+        } else if is_zdo {
             debug!(
                 node_id = format_args!("0x{node_id:04x}"),
                 cluster_id = format_args!("0x{cluster_id:04x}"),
                 "ignoring ZDO frame from remote (not a ZCL command)"
             );
+            return Some(NativeZigbeeEvent::IncomingMessage {
+                node_id,
+                cluster_id,
+                payload: payload.to_vec(),
+            });
         } else {
             info!(
                 node_id = format_args!("0x{node_id:04x}"),
@@ -2854,12 +3157,12 @@ async fn handle_incoming_cluster(
                 "routing incoming message to remote command handler"
             );
             handle_remote_command(context, node_id, cluster_id, payload).await;
+            return Some(NativeZigbeeEvent::IncomingMessage {
+                node_id,
+                cluster_id,
+                payload: payload.to_vec(),
+            });
         }
-        return Some(NativeZigbeeEvent::IncomingMessage {
-            node_id,
-            cluster_id,
-            payload: payload.to_vec(),
-        });
     }
 
     match cluster_id {
@@ -2871,6 +3174,28 @@ async fn handle_incoming_cluster(
                     "device announce received — starting discovery"
                 );
                 ensure_joined_device(context, announcement.node_id, announcement.eui64.clone());
+                // Device_annce means the device just (re-)joined the network.
+                // If it was previously classified (e.g. as Remote due to
+                // misclassification), reset it so discovery can re-interview
+                // from scratch.  This ensures ZDO responses (Active_EP_rsp,
+                // Simple_Desc_rsp) won't be blocked by the sender_is_remote
+                // filter above.
+                if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == announcement.node_id) {
+                    if device.interview_completed {
+                        info!(
+                            node_id = format_args!("0x{:04x}", announcement.node_id),
+                            old_type = ?device.device_type,
+                            old_endpoint = ?device.endpoint,
+                            "device re-announced — resetting classification for fresh interview"
+                        );
+                        device.device_type = ZigbeeDeviceType::Unknown;
+                        device.endpoint = None;
+                        device.interview_completed = false;
+                        device.interview_attempts = 0;
+                        device.input_clusters = Vec::new();
+                        device.output_clusters = Vec::new();
+                    }
+                }
                 request_known_device_discovery(context, announcement.node_id).await;
                 Some(NativeZigbeeEvent::DeviceAnnounced {
                     node_id: announcement.node_id,
@@ -3225,14 +3550,6 @@ fn is_preferred_light_endpoint(description: &SimpleDescriptor) -> bool {
         && (description.input_clusters.contains(&ON_OFF_CLUSTER_ID)
             || description.input_clusters.contains(&LEVEL_CONTROL_CLUSTER_ID)
             || description.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID))
-}
-
-/// Classify a device based on its Simple Descriptor.
-/// Check whether an EUI64 belongs to a manufacturer known to produce Zigbee
-/// remote controls / dimmer switches.  These sleepy end devices never respond
-/// to ZDO interview requests, so we classify them at join time by OUI.
-fn is_known_remote_oui(eui64: &str) -> bool {
-    eui64.starts_with(PHILIPS_OUI_PREFIX)
 }
 
 ///

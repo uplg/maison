@@ -442,6 +442,17 @@ impl ZigbeeManager {
         self.inner.store.save_lamps(&stored)
     }
 
+    /// Initiate a Touchlink (ZLL) scan to discover and commission factory-new
+    /// ZLL devices that don't respond to standard permit-join.
+    pub async fn touchlink_scan(&self) -> Result<(), AppError> {
+        if let Some(native) = &self.native {
+            return native.touchlink_scan().await;
+        }
+        Err(AppError::service_unavailable(
+            "Touchlink scan is only supported on the native Zigbee backend",
+        ))
+    }
+
     pub async fn shutdown(&self) {
         if let Some(native) = &self.native {
             native.shutdown().await;
@@ -1107,6 +1118,13 @@ impl NativeZigbeeManager {
             permit_join_seconds: seconds,
             message: pairing.message.clone(),
         })
+    }
+
+    async fn touchlink_scan(&self) -> Result<(), AppError> {
+        self.inner
+            .runtime
+            .send(NativeZigbeeCommand::TouchlinkScan)
+            .await
     }
 
     async fn stop_pairing(&self) -> Result<ZigbeePairingStatus, AppError> {

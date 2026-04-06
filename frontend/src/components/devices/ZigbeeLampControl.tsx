@@ -564,6 +564,24 @@ export function ZigbeePairingPanel() {
     },
   });
 
+  const touchlinkScanMutation = useMutation({
+    mutationFn: zigbeeLampsApi.touchlinkScan,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["zigbee-pairing-status"] });
+      toast({
+        title: t("zigbeeLamps.touchlinkStarted"),
+        description: t("zigbeeLamps.touchlinkStartedDescription"),
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: t("common.error"),
+        description: error instanceof Error ? error.message : t("zigbeeLamps.touchlinkFailed"),
+        variant: "destructive",
+      });
+    },
+  });
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       {pairing?.active ? (
@@ -589,6 +607,15 @@ export function ZigbeePairingPanel() {
       >
         {stopPairingMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
         {t("zigbeeLamps.stopPairing")}
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => touchlinkScanMutation.mutate()}
+        disabled={touchlinkScanMutation.isPending}
+      >
+        {touchlinkScanMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+        {t("zigbeeLamps.touchlinkScan")}
       </Button>
     </div>
   );

@@ -48,6 +48,12 @@ struct ZigbeePairingResponse {
     message: String,
 }
 
+#[derive(Debug, Serialize)]
+struct ZigbeeTouchlinkResponse {
+    success: bool,
+    message: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct PowerBody {
     enabled: bool,
@@ -75,6 +81,7 @@ pub fn router() -> Router<AppState> {
         .route("/lamps/pairing/start", post(start_pairing))
         .route("/lamps/pairing/stop", post(stop_pairing))
         .route("/lamps/pairing/status", get(pairing_status))
+        .route("/lamps/pairing/touchlink", post(touchlink_scan))
         .route("/lamps/{lamp_id}", get(get_lamp))
         .route("/lamps/{lamp_id}/power", post(set_power))
         .route("/lamps/{lamp_id}/brightness", post(set_brightness))
@@ -181,6 +188,18 @@ async fn stop_pairing(
         success: true,
         pairing,
         message: "Zigbee pairing stopped".to_string(),
+    }))
+}
+
+async fn touchlink_scan(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+) -> Result<Json<ZigbeeTouchlinkResponse>, AppError> {
+    let _ = user.0;
+    state.zigbee.touchlink_scan().await?;
+    Ok(Json(ZigbeeTouchlinkResponse {
+        success: true,
+        message: "Touchlink scan initiated".to_string(),
     }))
 }
 

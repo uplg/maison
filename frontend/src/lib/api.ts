@@ -440,6 +440,9 @@ export const zigbeeLampsApi = {
 
   stopPairing: () => api<ZigbeePairingResponse>("/zigbee/lamps/pairing/stop", { method: "POST" }),
 
+  touchlinkScan: () =>
+    api<ZigbeeSimpleResponse>("/zigbee/lamps/pairing/touchlink", { method: "POST" }),
+
   power: (lampId: string, enabled: boolean) =>
     api<ZigbeeLampActionResponse>(`/zigbee/lamps/${lampId}/power`, {
       method: "POST",
