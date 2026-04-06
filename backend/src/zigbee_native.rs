@@ -465,6 +465,9 @@ struct DiscoveredDevice {
     supports_brightness: bool,
     supports_temperature: bool,
     has_color_control_cluster: bool,
+    /// True only if the device supports CIE XY color (bit 3 of ZCL colorCapabilities 0x400A).
+    /// White Ambiance lamps have Color Control cluster for temperature only — this stays false.
+    supports_xy_color: bool,
     is_on: bool,
     brightness: u8,
     temperature: Option<u8>,
@@ -1588,9 +1591,9 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
         NativeZigbeeCommand::SetColor { lamp_id, x, y } => {
             let target = find_target_device(context, &lamp_id)?;
 
-            if !target.has_color_control_cluster {
+            if !target.supports_xy_color {
                 return Err(AppError::service_unavailable(format!(
-                    "Native color control is not available for {lamp_id}; the lamp does not have the Color Control cluster"
+                    "Native color control is not available for {lamp_id}; the lamp does not support XY color"
                 )));
             }
 
@@ -1960,7 +1963,7 @@ async fn refresh_device_state(context: &mut EzspContext, target: &DiscoveredDevi
         send_read_attributes(context, target.node_id, endpoint, LEVEL_CONTROL_CLUSTER_ID, &[0x0000]).await?;
     }
     if target.has_color_control_cluster {
-        send_read_attributes(context, target.node_id, endpoint, COLOR_CONTROL_CLUSTER_ID, &[0x0003, 0x0004, 0x0007, 0x0008]).await?;
+        send_read_attributes(context, target.node_id, endpoint, COLOR_CONTROL_CLUSTER_ID, &[0x0003, 0x0004, 0x0007, 0x0008, 0x400A]).await?;
     }
 
     Ok(())
@@ -2249,6 +2252,7 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
             supports_brightness: false,
             supports_temperature: false,
             has_color_control_cluster: false,
+            supports_xy_color: false,
             is_on: true,
             brightness: 100,
             temperature: None,
@@ -2387,7 +2391,7 @@ async fn restore_desired_state(context: &mut EzspContext) {
                 d.desired_color_y,
                 d.supports_brightness,
                 d.supports_temperature,
-                d.has_color_control_cluster,
+                d.supports_xy_color,
                 d.is_on,
             )
         })
@@ -3362,6 +3366,7 @@ async fn handle_incoming_cluster(
                 device.supports_brightness = false;
                 device.supports_temperature = false;
                 device.has_color_control_cluster = false;
+                device.supports_xy_color = false;
             }
             // The device is awake now — send bind requests so future presses reach us.
             if let Some(eui64) = remote_eui64 {
@@ -3543,6 +3548,7 @@ async fn handle_incoming_cluster(
                             device.supports_brightness = false;
                             device.supports_temperature = false;
                             device.has_color_control_cluster = false;
+                            device.supports_xy_color = false;
                             info!(
                                 node_id = format_args!("0x{node_id:04x}"),
                                 eui64 = %device.eui64,
@@ -3553,6 +3559,8 @@ async fn handle_incoming_cluster(
                             device.supports_brightness = description.input_clusters.contains(&LEVEL_CONTROL_CLUSTER_ID);
                             device.has_color_control_cluster = description.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID);
                             device.supports_temperature = device.supports_temperature && device.has_color_control_cluster;
+                            // supports_xy_color stays false until we read colorCapabilities (0x400A)
+                            // during refresh_device_state — don't set it from the cluster list alone.
                         }
                         device.interview_completed = true;
                         device.interview_attempts = 0;
@@ -3678,6 +3686,18 @@ fn parse_zcl_read_attributes_response(
                         device.color_mode = Some(*value);
                     }
                 }
+                // colorCapabilities (0x400A): 16-bit bitmap.
+                // Bit 0 = Hue/Saturation, Bit 3 = XY, Bit 4 = Color Temperature.
+                (COLOR_CONTROL_CLUSTER_ID, 0x400A) if value_bytes.len() >= 2 => {
+                    let caps = u16::from(value_bytes[0]) | (u16::from(value_bytes[1]) << 8);
+                    device.supports_xy_color = (caps & 0x08) != 0;
+                    debug!(
+                        node_id = format_args!("0x{:04x}", device.node_id),
+                        caps = format_args!("0x{caps:04x}"),
+                        supports_xy = device.supports_xy_color,
+                        "parsed colorCapabilities"
+                    );
+                }
                 (BASIC_CLUSTER_ID, 0x0004) => {
                     if let Ok(text) = String::from_utf8(value_bytes.to_vec()) {
                         device.manufacturer = Some(text);
@@ -3696,8 +3716,11 @@ fn parse_zcl_read_attributes_response(
 
 fn parse_zcl_attribute_value(data_type: u8, payload: &[u8]) -> Option<(usize, &[u8])> {
     match data_type {
-        0x10 | 0x18 | 0x20 => payload.first().map(|_| (1, &payload[..1])),
-        0x21 => (payload.len() >= 2).then_some((2, &payload[..2])),
+        // 1-byte: boolean (0x10), 8-bit bitmap (0x18), uint8 (0x20), enum8 (0x30)
+        0x10 | 0x18 | 0x20 | 0x30 => payload.first().map(|_| (1, &payload[..1])),
+        // 2-byte: 16-bit bitmap (0x19), uint16 (0x21), enum16 (0x31)
+        0x19 | 0x21 | 0x31 => (payload.len() >= 2).then_some((2, &payload[..2])),
+        // length-prefixed octet string
         0x42 => {
             let len = *payload.first()? as usize;
             (payload.len() > len).then_some((1 + len, &payload[1..1 + len]))
@@ -3979,7 +4002,7 @@ async fn sync_status_devices(
             output_clusters: device.output_clusters.clone(),
             supports_brightness: device.supports_brightness,
             supports_temperature: device.supports_temperature,
-            supports_color: device.has_color_control_cluster,
+            supports_color: device.supports_xy_color,
             device_type: device.device_type,
             connected: device.connected,
             reachable: device.reachable,
@@ -4049,6 +4072,7 @@ fn seed_known_device(device: NativeKnownDevice) -> DiscoveredDevice {
         eui64: device.eui64,
         endpoint: device.endpoint,
         has_color_control_cluster: device.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID),
+        supports_xy_color: false, // will be set when colorCapabilities (0x400A) is read
         device_type: device.device_type,
         input_clusters: device.input_clusters,
         output_clusters: device.output_clusters,
@@ -4181,6 +4205,7 @@ mod tests {
             supports_brightness: true,
             supports_temperature: false,
             has_color_control_cluster: false,
+            supports_xy_color: false,
             is_on: true,
             brightness: 100,
             temperature: None,
@@ -4224,6 +4249,7 @@ mod tests {
             supports_brightness: true,
             supports_temperature: false,
             has_color_control_cluster: false,
+            supports_xy_color: false,
             is_on: true,
             brightness: 100,
             temperature: None,
@@ -4259,6 +4285,7 @@ mod tests {
             supports_brightness: true,
             supports_temperature: false,
             has_color_control_cluster: true,
+            supports_xy_color: false,
             is_on: true,
             brightness: 100,
             temperature: None,
