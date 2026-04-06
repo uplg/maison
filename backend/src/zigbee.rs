@@ -42,6 +42,12 @@ pub struct ZigbeeLampState {
     pub temperature_min: Option<u8>,
     #[serde(rename = "temperatureMax")]
     pub temperature_max: Option<u8>,
+    #[serde(rename = "colorX")]
+    pub color_x: Option<f32>,
+    #[serde(rename = "colorY")]
+    pub color_y: Option<f32>,
+    #[serde(rename = "colorMode")]
+    pub color_mode: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,6 +70,8 @@ pub struct ZigbeeLampView {
     pub supports_brightness: bool,
     #[serde(rename = "supportsTemperature")]
     pub supports_temperature: bool,
+    #[serde(rename = "supportsColor")]
+    pub supports_color: bool,
     pub state: ZigbeeLampState,
     #[serde(rename = "lastSeen")]
     pub last_seen: Option<String>,
@@ -106,6 +114,8 @@ struct StoredZigbeeLampConfig {
     firmware: Option<String>,
     supports_brightness: bool,
     supports_temperature: bool,
+    #[serde(default)]
+    supports_color: bool,
     color_temp_min: Option<u16>,
     color_temp_max: Option<u16>,
     #[serde(default)]
@@ -155,6 +165,9 @@ struct RuntimeLampState {
     temperature: Option<u8>,
     temperature_min: Option<u8>,
     temperature_max: Option<u8>,
+    color_x: Option<f32>,
+    color_y: Option<f32>,
+    color_mode: Option<u8>,
 }
 
 #[derive(Default)]
@@ -191,6 +204,9 @@ impl ZigbeeManager {
                     temperature: None,
                     temperature_min: lamp.color_temp_min.map(|_| 0),
                     temperature_max: lamp.color_temp_max.map(|_| 100),
+                    color_x: None,
+                    color_y: None,
+                    color_mode: None,
                 };
 
                 (
@@ -412,6 +428,64 @@ impl ZigbeeManager {
 
         self.update_state_after_command(lamp_id, |lamp| {
             lamp.state.temperature = Some(temperature.clamp(0, 100));
+            lamp.connected = true;
+            lamp.reachable = true;
+        })
+        .await
+    }
+
+    pub async fn set_color(
+        &self,
+        lamp_id: &str,
+        x: f32,
+        y: f32,
+    ) -> Result<ZigbeeLampState, AppError> {
+        if let Some(native) = &self.native {
+            return native.set_color(lamp_id, x, y).await;
+        }
+        let friendly_name = self.friendly_name_for(lamp_id).await?;
+        {
+            let lamps = self.inner.lamps.read().await;
+            let lamp = lamps.get(lamp_id).ok_or_else(|| not_found("Zigbee lamp not found"))?;
+            if !lamp.config.supports_color {
+                return Err(AppError::http(
+                    StatusCode::BAD_REQUEST,
+                    "This Zigbee lamp does not support color control",
+                ));
+            }
+        }
+
+        self.publish_device_set(&friendly_name, json!({
+            "color": { "x": x, "y": y },
+        }))
+        .await?;
+
+        self.update_state_after_command(lamp_id, |lamp| {
+            lamp.state.color_x = Some(x.clamp(0.0, 1.0));
+            lamp.state.color_y = Some(y.clamp(0.0, 1.0));
+            lamp.state.color_mode = Some(1); // XY mode
+            lamp.connected = true;
+            lamp.reachable = true;
+        })
+        .await
+    }
+
+    pub async fn set_effect(
+        &self,
+        lamp_id: &str,
+        effect: &str,
+    ) -> Result<ZigbeeLampState, AppError> {
+        if let Some(native) = &self.native {
+            return native.set_effect(lamp_id, effect).await;
+        }
+        let friendly_name = self.friendly_name_for(lamp_id).await?;
+
+        self.publish_device_set(&friendly_name, json!({
+            "effect": effect,
+        }))
+        .await?;
+
+        self.update_state_after_command(lamp_id, |lamp| {
             lamp.connected = true;
             lamp.reachable = true;
         })
@@ -713,6 +787,7 @@ impl ZigbeeManager {
                     firmware: discovered.firmware.clone(),
                     supports_brightness: discovered.supports_brightness,
                     supports_temperature: discovered.supports_temperature,
+                    supports_color: false,
                     color_temp_min: discovered.color_temp_min,
                     color_temp_max: discovered.color_temp_max,
                     is_remote: false,
@@ -723,6 +798,9 @@ impl ZigbeeManager {
                     temperature: None,
                     temperature_min: discovered.color_temp_min.map(|_| 0),
                     temperature_max: discovered.color_temp_max.map(|_| 100),
+                    color_x: None,
+                    color_y: None,
+                    color_mode: None,
                 },
                 connected: false,
                 reachable: false,
@@ -981,6 +1059,9 @@ impl NativeZigbeeManager {
                     temperature: None,
                     temperature_min: lamp.color_temp_min.map(|_| 0),
                     temperature_max: lamp.color_temp_max.map(|_| 100),
+                    color_x: None,
+                    color_y: None,
+                    color_mode: None,
                 };
 
                 (
@@ -1194,6 +1275,39 @@ impl NativeZigbeeManager {
         self.current_state(lamp_id).await
     }
 
+    async fn set_color(&self, lamp_id: &str, x: f32, y: f32) -> Result<ZigbeeLampState, AppError> {
+        if let Err(error) = self.sync_from_runtime().await {
+            warn!(lamp_id, error = %error, "failed to sync native zigbee lamp before color change");
+        }
+        self.inner
+            .runtime
+            .send(NativeZigbeeCommand::SetColor {
+                lamp_id: lamp_id.to_string(),
+                x,
+                y,
+            })
+            .await?;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        self.sync_from_runtime().await?;
+        self.current_state(lamp_id).await
+    }
+
+    async fn set_effect(&self, lamp_id: &str, effect: &str) -> Result<ZigbeeLampState, AppError> {
+        if let Err(error) = self.sync_from_runtime().await {
+            warn!(lamp_id, error = %error, "failed to sync native zigbee lamp before effect change");
+        }
+        self.inner
+            .runtime
+            .send(NativeZigbeeCommand::SetEffect {
+                lamp_id: lamp_id.to_string(),
+                effect: effect.to_string(),
+            })
+            .await?;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        self.sync_from_runtime().await?;
+        self.current_state(lamp_id).await
+    }
+
     async fn rename_lamp(&self, lamp_id: &str, name: &str) -> Result<(), AppError> {
         if let Err(error) = self.sync_from_runtime().await {
             warn!(lamp_id, error = %error, "failed to sync native zigbee lamp before rename");
@@ -1261,6 +1375,7 @@ impl NativeZigbeeManager {
                     firmware: None,
                     supports_brightness: device.supports_brightness,
                     supports_temperature: device.supports_temperature,
+                    supports_color: device.supports_color,
                     color_temp_min: if device.supports_temperature { Some(153) } else { None },
                     color_temp_max: if device.supports_temperature { Some(500) } else { None },
                     is_remote: device.device_type == ZigbeeDeviceType::Remote,
@@ -1271,6 +1386,9 @@ impl NativeZigbeeManager {
                     temperature: device.temperature,
                     temperature_min: if device.supports_temperature { Some(0) } else { None },
                     temperature_max: if device.supports_temperature { Some(100) } else { None },
+                    color_x: device.color_x,
+                    color_y: device.color_y,
+                    color_mode: device.color_mode,
                 },
                 connected: device.connected,
                 reachable: device.reachable,
@@ -1288,6 +1406,7 @@ impl NativeZigbeeManager {
             runtime.config.manufacturer = device.manufacturer.clone().or(runtime.config.manufacturer.clone());
             runtime.config.supports_brightness = device.supports_brightness;
             runtime.config.supports_temperature = device.supports_temperature;
+            runtime.config.supports_color = device.supports_color;
             runtime.config.color_temp_min = if device.supports_temperature { Some(153) } else { None };
             runtime.config.color_temp_max = if device.supports_temperature { Some(500) } else { None };
             runtime.config.is_remote = device.device_type == ZigbeeDeviceType::Remote;
@@ -1304,6 +1423,9 @@ impl NativeZigbeeManager {
             runtime.state.temperature = device.temperature;
             runtime.state.temperature_min = if device.supports_temperature { Some(0) } else { None };
             runtime.state.temperature_max = if device.supports_temperature { Some(100) } else { None };
+            runtime.state.color_x = device.color_x;
+            runtime.state.color_y = device.color_y;
+            runtime.state.color_mode = device.color_mode;
             if runtime.config.name.trim().is_empty() {
                 runtime.config.name = device.eui64.clone();
             }
@@ -1380,11 +1502,15 @@ fn native_runtime_equals(left: &ZigbeeLampRuntime, right: &ZigbeeLampRuntime) ->
         && left.config.output_clusters == right.config.output_clusters
         && left.config.supports_brightness == right.config.supports_brightness
         && left.config.supports_temperature == right.config.supports_temperature
+        && left.config.supports_color == right.config.supports_color
         && left.connected == right.connected
         && left.reachable == right.reachable
         && left.state.is_on == right.state.is_on
         && left.state.brightness == right.state.brightness
         && left.state.temperature == right.state.temperature
+        && left.state.color_x == right.state.color_x
+        && left.state.color_y == right.state.color_y
+        && left.state.color_mode == right.state.color_mode
 }
 
 impl DiscoveredLamp {
@@ -1476,6 +1602,7 @@ fn to_view(lamp: &ZigbeeLampRuntime) -> ZigbeeLampView {
         reachable: lamp.reachable,
         supports_brightness: lamp.config.supports_brightness,
         supports_temperature: lamp.config.supports_temperature,
+        supports_color: lamp.config.supports_color,
         state: current_state(lamp),
         last_seen: lamp.last_seen.clone(),
     }
@@ -1488,6 +1615,9 @@ fn current_state(lamp: &ZigbeeLampRuntime) -> ZigbeeLampState {
         temperature: lamp.state.temperature,
         temperature_min: lamp.state.temperature_min,
         temperature_max: lamp.state.temperature_max,
+        color_x: lamp.state.color_x,
+        color_y: lamp.state.color_y,
+        color_mode: lamp.state.color_mode,
     }
 }
 
@@ -1797,6 +1927,7 @@ mod tests {
                 firmware: None,
                 supports_brightness: true,
                 supports_temperature: false,
+                supports_color: false,
                 color_temp_min: None,
                 color_temp_max: None,
                 is_remote: false,
@@ -1821,12 +1952,16 @@ mod tests {
                 output_clusters: vec![25],
                 supports_brightness: true,
                 supports_temperature: false,
+                supports_color: false,
                 device_type: ZigbeeDeviceType::Lamp,
                 connected: true,
                 reachable: true,
                 is_on: true,
                 brightness: 100,
                 temperature: None,
+                color_x: None,
+                color_y: None,
+                color_mode: None,
                 model: Some("LTG002".to_string()),
                 manufacturer: Some("Signify Netherlands B.V.".to_string()),
                 last_seen: None,

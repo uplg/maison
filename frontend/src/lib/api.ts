@@ -358,6 +358,9 @@ export interface ZigbeeLampState {
   temperature: number | null;
   temperatureMin: number | null;
   temperatureMax: number | null;
+  colorX: number | null;
+  colorY: number | null;
+  colorMode: number | null;
 }
 
 export interface ZigbeeLamp {
@@ -374,6 +377,7 @@ export interface ZigbeeLamp {
   reachable: boolean;
   supportsBrightness: boolean;
   supportsTemperature: boolean;
+  supportsColor: boolean;
   state: ZigbeeLampState;
   lastSeen: string | null;
 }
@@ -459,6 +463,18 @@ export const zigbeeLampsApi = {
     api<ZigbeeLampActionResponse>(`/zigbee/lamps/${lampId}/temperature`, {
       method: "POST",
       body: { temperature },
+    }),
+
+  color: (lampId: string, x: number, y: number) =>
+    api<ZigbeeLampActionResponse>(`/zigbee/lamps/${lampId}/color`, {
+      method: "POST",
+      body: { x, y },
+    }),
+
+  effect: (lampId: string, effect: string) =>
+    api<ZigbeeLampActionResponse>(`/zigbee/lamps/${lampId}/effect`, {
+      method: "POST",
+      body: { effect },
     }),
 
   rename: (lampId: string, name: string) =>

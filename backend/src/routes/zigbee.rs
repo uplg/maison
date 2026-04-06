@@ -70,6 +70,17 @@ struct TemperatureBody {
 }
 
 #[derive(Debug, Deserialize)]
+struct ColorBody {
+    x: f32,
+    y: f32,
+}
+
+#[derive(Debug, Deserialize)]
+struct EffectBody {
+    effect: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct RenameBody {
     name: String,
 }
@@ -86,6 +97,8 @@ pub fn router() -> Router<AppState> {
         .route("/lamps/{lamp_id}/power", post(set_power))
         .route("/lamps/{lamp_id}/brightness", post(set_brightness))
         .route("/lamps/{lamp_id}/temperature", post(set_temperature))
+        .route("/lamps/{lamp_id}/color", post(set_color))
+        .route("/lamps/{lamp_id}/effect", post(set_effect))
         .route("/lamps/{lamp_id}/rename", post(rename_lamp))
 }
 
@@ -245,6 +258,36 @@ async fn set_temperature(
         success: true,
         state: lamp_state,
         message: "Zigbee lamp temperature updated".to_string(),
+    }))
+}
+
+async fn set_color(
+    State(state): State<AppState>,
+    Path(lamp_id): Path<String>,
+    user: AuthenticatedUser,
+    Json(body): Json<ColorBody>,
+) -> Result<Json<ZigbeeActionResponse>, AppError> {
+    let _ = user.0;
+    let lamp_state = state.zigbee.set_color(&lamp_id, body.x, body.y).await?;
+    Ok(Json(ZigbeeActionResponse {
+        success: true,
+        state: lamp_state,
+        message: "Zigbee lamp color updated".to_string(),
+    }))
+}
+
+async fn set_effect(
+    State(state): State<AppState>,
+    Path(lamp_id): Path<String>,
+    user: AuthenticatedUser,
+    Json(body): Json<EffectBody>,
+) -> Result<Json<ZigbeeActionResponse>, AppError> {
+    let _ = user.0;
+    let lamp_state = state.zigbee.set_effect(&lamp_id, &body.effect).await?;
+    Ok(Json(ZigbeeActionResponse {
+        success: true,
+        state: lamp_state,
+        message: "Zigbee lamp effect applied".to_string(),
     }))
 }
 

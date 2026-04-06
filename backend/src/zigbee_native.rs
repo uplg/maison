@@ -29,6 +29,8 @@ use tracing::{debug, error, info, warn};
 
 use silizium::zigbee::security::man as security_man;
 
+use axum::http::StatusCode;
+
 use crate::error::AppError;
 
 const DEFAULT_EZSP_PROTOCOL_VERSION: u8 = 13;
@@ -44,7 +46,16 @@ const ZCL_READ_ATTRIBUTES_RESPONSE_COMMAND_ID: u8 = 0x01;
 const ZCL_ON_OFF_COMMAND_OFF: u8 = 0x00;
 const ZCL_ON_OFF_COMMAND_ON: u8 = 0x01;
 const ZCL_LEVEL_CONTROL_COMMAND_MOVE_TO_LEVEL: u8 = 0x04;
+const ZCL_COLOR_CONTROL_COMMAND_MOVE_TO_COLOR: u8 = 0x07;
 const ZCL_COLOR_CONTROL_COMMAND_MOVE_TO_COLOR_TEMPERATURE: u8 = 0x0a;
+const IDENTIFY_CLUSTER_ID: u16 = 0x0003;
+const ZCL_IDENTIFY_TRIGGER_EFFECT_COMMAND_ID: u8 = 0x40;
+/// Philips manufacturer-specific cluster for Hue effects (candle, fireplace, colorloop, etc.).
+const PHILIPS_MANU_SPECIFIC_CLUSTER_ID: u16 = 0xFC03;
+const PHILIPS_MANUFACTURER_CODE: u16 = 0x100B;
+const PHILIPS_MULTI_COLOR_COMMAND_ID: u8 = 0x00;
+/// ZCL frame control byte for manufacturer-specific cluster-specific commands (client → server).
+const ZCL_MANU_CLUSTER_COMMAND_FRAME_CONTROL: u8 = 0x05;
 const BASIC_CLUSTER_ID: u16 = 0x0000;
 const HOME_AUTOMATION_PROFILE_ID: u16 = 0x0104;
 const SIMPLE_DESC_REQ_CLUSTER_ID: u16 = 0x0004;
@@ -145,6 +156,8 @@ pub enum NativeZigbeeCommand {
     SetPower { lamp_id: String, enabled: bool },
     SetBrightness { lamp_id: String, brightness: u8 },
     SetTemperature { lamp_id: String, temperature: u8 },
+    SetColor { lamp_id: String, x: f32, y: f32 },
+    SetEffect { lamp_id: String, effect: String },
     /// Initiate a Touchlink (ZLL) scan to discover and commission factory-new
     /// ZLL devices (e.g. Hue Lightstrip Plus) that don't respond to standard
     /// NWK-level permit-join.
@@ -170,12 +183,16 @@ pub struct NativeDiscoveredDevice {
     pub output_clusters: Vec<u16>,
     pub supports_brightness: bool,
     pub supports_temperature: bool,
+    pub supports_color: bool,
     pub device_type: ZigbeeDeviceType,
     pub connected: bool,
     pub reachable: bool,
     pub is_on: bool,
     pub brightness: u8,
     pub temperature: Option<u8>,
+    pub color_x: Option<f32>,
+    pub color_y: Option<f32>,
+    pub color_mode: Option<u8>,
     pub model: Option<String>,
     pub manufacturer: Option<String>,
     pub last_seen: Option<String>,
@@ -451,6 +468,12 @@ struct DiscoveredDevice {
     is_on: bool,
     brightness: u8,
     temperature: Option<u8>,
+    /// CIE 1931 color X (0.0–1.0), read from attribute 0x0003.
+    color_x: Option<f32>,
+    /// CIE 1931 color Y (0.0–1.0), read from attribute 0x0004.
+    color_y: Option<f32>,
+    /// ZCL colorMode attribute (0x0008): 0=HS, 1=XY, 2=ColorTemperature.
+    color_mode: Option<u8>,
     interview_completed: bool,
     model: Option<String>,
     manufacturer: Option<String>,
@@ -462,6 +485,9 @@ struct DiscoveredDevice {
     desired_brightness: Option<u8>,
     /// Last user-requested colour temperature (0–100).  Re-applied on reconnect.
     desired_temperature: Option<u8>,
+    /// Last user-requested CIE XY color.  Re-applied on reconnect.
+    desired_color_x: Option<f32>,
+    desired_color_y: Option<f32>,
     /// Set to `false` when the device becomes unreachable; set back to `true` after
     /// `restore_desired_state` successfully re-sends the desired brightness/temperature.
     /// This prevents re-sending every 30 s — we only restore on the unreachable→reachable transition.
@@ -1549,6 +1575,186 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
             if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == target.node_id) {
                 device.temperature = Some(temperature.min(100));
                 device.desired_temperature = Some(temperature.min(100));
+                device.color_mode = Some(2); // Color Temperature mode
+                // Clear desired color — the lamp is now in CT mode, so
+                // re-sending a stale XY color on the next restore cycle would
+                // revert it back to XY mode.
+                device.desired_color_x = None;
+                device.desired_color_y = None;
+            }
+
+            Ok(())
+        }
+        NativeZigbeeCommand::SetColor { lamp_id, x, y } => {
+            let target = find_target_device(context, &lamp_id)?;
+
+            if !target.has_color_control_cluster {
+                return Err(AppError::service_unavailable(format!(
+                    "Native color control is not available for {lamp_id}; the lamp does not have the Color Control cluster"
+                )));
+            }
+
+            let endpoint = target
+                .endpoint
+                .ok_or_else(|| AppError::service_unavailable(format!(
+                    "Lamp {lamp_id} has no discovered endpoint yet; run discovery first"
+                )))?;
+            let sequence = next_device_sequence(context, target.node_id);
+            let zcl_payload = build_color_xy_command_payload(x, y, sequence);
+            let aps_frame = EzspApsFrame::new(
+                HOME_AUTOMATION_PROFILE_ID,
+                COLOR_CONTROL_CLUSTER_ID,
+                DEFAULT_SOURCE_ENDPOINT,
+                endpoint,
+                EzspApsOptions::RETRY | EzspApsOptions::ENABLE_ROUTE_DISCOVERY,
+                0,
+                0,
+            );
+
+            context
+                .uart
+                .send_unicast(
+                    Destination::Direct(NodeId::from(target.node_id)),
+                    aps_frame,
+                    0,
+                    zcl_payload.into_iter().collect(),
+                )
+                .await
+                .map(|_| ())
+                .map_err(map_ezsp_error("send unicast color xy"))?;
+
+            if let Some(device) = context.joined_devices.iter_mut().find(|device| device.node_id == target.node_id) {
+                device.color_x = Some(x.clamp(0.0, 1.0));
+                device.color_y = Some(y.clamp(0.0, 1.0));
+                device.color_mode = Some(1); // XY mode
+                device.desired_color_x = Some(x.clamp(0.0, 1.0));
+                device.desired_color_y = Some(y.clamp(0.0, 1.0));
+                // Clear desired temperature — the lamp is now in XY color
+                // mode, so re-sending a stale temperature on the next restore
+                // cycle would revert it back to CT mode.
+                device.desired_temperature = None;
+            }
+
+            Ok(())
+        }
+        NativeZigbeeCommand::SetEffect { lamp_id, effect } => {
+            let target = find_target_device(context, &lamp_id)?;
+
+            let endpoint = target
+                .endpoint
+                .ok_or_else(|| AppError::service_unavailable(format!(
+                    "Lamp {lamp_id} has no discovered endpoint yet; run discovery first"
+                )))?;
+
+            // Determine which cluster and payload to use based on the effect name.
+            // Standard Identify cluster effects:
+            //   blink, breathe, okay, channel_change, finish_effect, stop_effect
+            // Philips Hue proprietary effects (cluster 0xFC03):
+            //   candle, fireplace, colorloop, sunrise, sparkle, opal, glisten, stop_hue_effect
+            let effect_lower = effect.to_ascii_lowercase();
+            match effect_lower.as_str() {
+                "blink" | "breathe" | "okay" | "channel_change" | "finish_effect" | "stop_effect" => {
+                    let effect_id: u8 = match effect_lower.as_str() {
+                        "blink" => 0x00,
+                        "breathe" => 0x01,
+                        "okay" => 0x02,
+                        "channel_change" => 0x0B,
+                        "finish_effect" => 0xFE,
+                        "stop_effect" => 0xFF,
+                        _ => unreachable!(),
+                    };
+                    let sequence = next_device_sequence(context, target.node_id);
+                    let zcl_payload = build_identify_trigger_effect_payload(effect_id, sequence);
+                    let aps_frame = EzspApsFrame::new(
+                        HOME_AUTOMATION_PROFILE_ID,
+                        IDENTIFY_CLUSTER_ID,
+                        DEFAULT_SOURCE_ENDPOINT,
+                        endpoint,
+                        EzspApsOptions::RETRY | EzspApsOptions::ENABLE_ROUTE_DISCOVERY,
+                        0,
+                        0,
+                    );
+
+                    context
+                        .uart
+                        .send_unicast(
+                            Destination::Direct(NodeId::from(target.node_id)),
+                            aps_frame,
+                            0,
+                            zcl_payload.into_iter().collect(),
+                        )
+                        .await
+                        .map(|_| ())
+                        .map_err(map_ezsp_error("send unicast identify effect"))?;
+                }
+                "candle" | "fireplace" | "colorloop" | "sunrise" | "sparkle" | "opal" | "glisten" => {
+                    let hue_effect_id: u8 = match effect_lower.as_str() {
+                        "candle" => 0x01,
+                        "fireplace" => 0x02,
+                        "colorloop" => 0x03,
+                        "sunrise" => 0x09,
+                        "sparkle" => 0x0A,
+                        "opal" => 0x0B,
+                        "glisten" => 0x0C,
+                        _ => unreachable!(),
+                    };
+                    let start_payload: &[u8] = &[0x21, 0x00, 0x01, hue_effect_id];
+                    let sequence = next_device_sequence(context, target.node_id);
+                    let zcl_payload = build_philips_hue_effect_payload(start_payload, sequence);
+                    let aps_frame = EzspApsFrame::new(
+                        HOME_AUTOMATION_PROFILE_ID,
+                        PHILIPS_MANU_SPECIFIC_CLUSTER_ID,
+                        DEFAULT_SOURCE_ENDPOINT,
+                        endpoint,
+                        EzspApsOptions::RETRY | EzspApsOptions::ENABLE_ROUTE_DISCOVERY,
+                        0,
+                        0,
+                    );
+
+                    context
+                        .uart
+                        .send_unicast(
+                            Destination::Direct(NodeId::from(target.node_id)),
+                            aps_frame,
+                            0,
+                            zcl_payload.into_iter().collect(),
+                        )
+                        .await
+                        .map(|_| ())
+                        .map_err(map_ezsp_error("send unicast hue effect"))?;
+                }
+                "stop_hue_effect" => {
+                    let stop_payload: &[u8] = &[0x20, 0x00, 0x00];
+                    let sequence = next_device_sequence(context, target.node_id);
+                    let zcl_payload = build_philips_hue_effect_payload(stop_payload, sequence);
+                    let aps_frame = EzspApsFrame::new(
+                        HOME_AUTOMATION_PROFILE_ID,
+                        PHILIPS_MANU_SPECIFIC_CLUSTER_ID,
+                        DEFAULT_SOURCE_ENDPOINT,
+                        endpoint,
+                        EzspApsOptions::RETRY | EzspApsOptions::ENABLE_ROUTE_DISCOVERY,
+                        0,
+                        0,
+                    );
+
+                    context
+                        .uart
+                        .send_unicast(
+                            Destination::Direct(NodeId::from(target.node_id)),
+                            aps_frame,
+                            0,
+                            zcl_payload.into_iter().collect(),
+                        )
+                        .await
+                        .map(|_| ())
+                        .map_err(map_ezsp_error("send unicast stop hue effect"))?;
+                }
+                _ => {
+                    return Err(AppError::http(
+                        StatusCode::BAD_REQUEST,
+                        format!("Unknown effect: {effect}. Supported: blink, breathe, okay, channel_change, finish_effect, stop_effect, candle, fireplace, colorloop, sunrise, sparkle, opal, glisten, stop_hue_effect"),
+                    ));
+                }
             }
 
             Ok(())
@@ -1754,7 +1960,7 @@ async fn refresh_device_state(context: &mut EzspContext, target: &DiscoveredDevi
         send_read_attributes(context, target.node_id, endpoint, LEVEL_CONTROL_CLUSTER_ID, &[0x0000]).await?;
     }
     if target.has_color_control_cluster {
-        send_read_attributes(context, target.node_id, endpoint, COLOR_CONTROL_CLUSTER_ID, &[0x0007]).await?;
+        send_read_attributes(context, target.node_id, endpoint, COLOR_CONTROL_CLUSTER_ID, &[0x0003, 0x0004, 0x0007, 0x0008]).await?;
     }
 
     Ok(())
@@ -1873,8 +2079,9 @@ async fn handle_callback(context: &mut EzspContext, callback: Callback) -> Optio
             parameters::messaging::handler::Handler::IncomingMessage(message) => {
                 let node_id: u16 = message.sender().into();
                 let cluster_id = message.aps_frame().cluster_id();
+                let profile_id = message.aps_frame().profile_id();
                 let payload = message.message().to_vec();
-                handle_incoming_cluster(context, node_id, cluster_id, &payload).await.or(Some(NativeZigbeeEvent::IncomingMessage {
+                handle_incoming_cluster(context, node_id, cluster_id, profile_id, &payload).await.or(Some(NativeZigbeeEvent::IncomingMessage {
                     node_id,
                     cluster_id,
                     payload,
@@ -2045,6 +2252,9 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
             is_on: true,
             brightness: 100,
             temperature: None,
+            color_x: None,
+            color_y: None,
+            color_mode: None,
             interview_completed: false,
             model: None,
             manufacturer: None,
@@ -2054,6 +2264,8 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
             last_seen: Some(Instant::now()),
             desired_brightness: None,
             desired_temperature: None,
+            desired_color_x: None,
+            desired_color_y: None,
             desired_state_applied: true,
         });
     }
@@ -2160,25 +2372,28 @@ async fn drain_pending_callbacks(context: &mut EzspContext) {
 /// **IMPORTANT**: no `timeout()` wrapper — see [`run_liveness_probes`] doc comment.
 async fn restore_desired_state(context: &mut EzspContext) {
     // Collect targets: devices that are reachable, have an endpoint, and have unapplied desired state.
-    let targets: Vec<(u16, u8, Option<u8>, Option<u8>, bool, bool, bool)> = context
+    let targets: Vec<(u16, u8, Option<u8>, Option<u8>, Option<f32>, Option<f32>, bool, bool, bool, bool)> = context
         .joined_devices
         .iter()
         .filter(|d| d.reachable && !d.desired_state_applied && d.endpoint.is_some())
-        .filter(|d| d.desired_brightness.is_some() || d.desired_temperature.is_some())
+        .filter(|d| d.desired_brightness.is_some() || d.desired_temperature.is_some() || d.desired_color_x.is_some())
         .map(|d| {
             (
                 d.node_id,
                 d.endpoint.unwrap(),
                 d.desired_brightness,
                 d.desired_temperature,
+                d.desired_color_x,
+                d.desired_color_y,
                 d.supports_brightness,
                 d.supports_temperature,
+                d.has_color_control_cluster,
                 d.is_on,
             )
         })
         .collect();
 
-    for (node_id, endpoint, desired_brightness, desired_temperature, supports_brightness, supports_temperature, was_on) in targets {
+    for (node_id, endpoint, desired_brightness, desired_temperature, desired_color_x, desired_color_y, supports_brightness, supports_temperature, has_color_control, was_on) in targets {
         // Restore brightness — but only if the lamp was supposed to be on.
         // Never send MoveToLevel(0) here: if the lamp was turned off (e.g. via
         // dimmer or wall switch), we should not re-send brightness 0 when it
@@ -2280,7 +2495,57 @@ async fn restore_desired_state(context: &mut EzspContext) {
             }
         }
 
-        // Both commands succeeded (or were skipped because unsupported) — mark as applied.
+        // Restore colour XY
+        if let (Some(color_x), Some(color_y)) = (desired_color_x, desired_color_y) {
+            if has_color_control {
+                let sequence = next_device_sequence(context, node_id);
+                let zcl_payload = build_color_xy_command_payload(color_x, color_y, sequence);
+                let aps_frame = EzspApsFrame::new(
+                    HOME_AUTOMATION_PROFILE_ID,
+                    COLOR_CONTROL_CLUSTER_ID,
+                    DEFAULT_SOURCE_ENDPOINT,
+                    endpoint,
+                    EzspApsOptions::RETRY | EzspApsOptions::ENABLE_ROUTE_DISCOVERY,
+                    0,
+                    0,
+                );
+
+                match context
+                    .uart
+                    .send_unicast(
+                        Destination::Direct(NodeId::from(node_id)),
+                        aps_frame,
+                        0,
+                        zcl_payload.into_iter().collect(),
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        info!(
+                            node_id = format_args!("0x{node_id:04x}"),
+                            color_x,
+                            color_y,
+                            "restored desired colour XY after reconnect"
+                        );
+                        if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+                            device.color_x = Some(color_x);
+                            device.color_y = Some(color_y);
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            node_id = format_args!("0x{node_id:04x}"),
+                            error = %error,
+                            "failed to restore desired colour XY"
+                        );
+                        // Don't mark as applied — retry next cycle.
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // All commands succeeded (or were skipped because unsupported) — mark as applied.
         if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
             device.desired_state_applied = true;
             info!(
@@ -3045,6 +3310,7 @@ async fn handle_incoming_cluster(
     context: &mut EzspContext,
     node_id: u16,
     cluster_id: u16,
+    profile_id: u16,
     payload: &[u8],
 ) -> Option<NativeZigbeeEvent> {
     // --- Intercept-on-wake / auto-classify: if this device hasn't completed
@@ -3124,13 +3390,15 @@ async fn handle_incoming_cluster(
 
     if sender_is_remote {
         // Skip ZDO frames (Bind Response, etc.) — they are
-        // not ZCL commands.  ZDO request cluster IDs are 0x0000..0x00FF and
-        // response cluster IDs are 0x8000..0x80FF.
+        // not ZCL commands.  ZDO uses profile_id 0x0000 and its cluster IDs
+        // overlap with ZCL application clusters (e.g. On/Off 0x0006), so we
+        // MUST use the APS profile_id to distinguish them — not the cluster_id
+        // range.
         // EXCEPTION: Device_annce (0x0013) is always processed — a device that
         // was previously classified as remote might have been factory-reset and
         // re-joined as a different device type.  We let it fall through to the
         // main match block so it gets proper ZDO handling (re-interview etc.).
-        let is_zdo = cluster_id <= 0x00FF || (0x8000..=0x80FF).contains(&cluster_id);
+        let is_zdo = profile_id == ZDO_PROFILE_ID;
         let is_device_announce = cluster_id == DEVICE_ANNCE_CLUSTER_ID;
         if is_device_announce {
             info!(
@@ -3235,13 +3503,36 @@ async fn handle_incoming_cluster(
                     device.last_seen = Some(Instant::now());
 
                     let is_remote = classified_type == ZigbeeDeviceType::Remote;
-                    let should_replace_endpoint = is_remote
-                        || (device.endpoint.is_none() && is_preferred_light_endpoint(&description))
-                        || device.endpoint == Some(description.endpoint)
-                        || (is_preferred_light_endpoint(&description)
-                            && !device.input_clusters.contains(&ON_OFF_CLUSTER_ID)
-                            && !device.input_clusters.contains(&LEVEL_CONTROL_CLUSTER_ID)
-                            && !device.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID));
+                    let already_classified_as_lamp = device.device_type == ZigbeeDeviceType::Lamp;
+
+                    // A Lamp endpoint always takes priority over a Remote
+                    // endpoint.  Multi-endpoint devices like the Hue Lightstrip
+                    // Plus (LCL001) expose both a utility endpoint (ep 1,
+                    // classified Remote because it has On/Off in output clusters
+                    // only) and the real light endpoint (ep 11).  If the Remote
+                    // endpoint arrives first, the light endpoint must be allowed
+                    // to correct the classification.  Conversely, if the Lamp
+                    // endpoint was already stored, a subsequent Remote endpoint
+                    // must NOT overwrite it.
+                    let should_replace_endpoint = if is_remote && already_classified_as_lamp {
+                        // Remote must NOT overwrite an existing Lamp.
+                        false
+                    } else if is_remote {
+                        // First classification — accept the Remote.
+                        true
+                    } else {
+                        (device.endpoint.is_none() && is_preferred_light_endpoint(&description))
+                            || device.endpoint == Some(description.endpoint)
+                            || (is_preferred_light_endpoint(&description)
+                                && !device.input_clusters.contains(&ON_OFF_CLUSTER_ID)
+                                && !device.input_clusters.contains(&LEVEL_CONTROL_CLUSTER_ID)
+                                && !device.input_clusters.contains(&COLOR_CONTROL_CLUSTER_ID))
+                            // A Lamp endpoint always corrects a prior Remote
+                            // misclassification, even if the current stored
+                            // input_clusters happen to overlap.
+                            || (is_preferred_light_endpoint(&description)
+                                && device.device_type == ZigbeeDeviceType::Remote)
+                    };
 
                     if should_replace_endpoint {
                         device.endpoint = Some(description.endpoint);
@@ -3368,11 +3659,24 @@ fn parse_zcl_read_attributes_response(
                         device.brightness = ((u16::from(*value) * 100) / 254) as u8;
                     }
                 }
+                (COLOR_CONTROL_CLUSTER_ID, 0x0003) if value_bytes.len() >= 2 => {
+                    let raw = u16::from(value_bytes[0]) | (u16::from(value_bytes[1]) << 8);
+                    device.color_x = Some(f32::from(raw) / 65535.0);
+                }
+                (COLOR_CONTROL_CLUSTER_ID, 0x0004) if value_bytes.len() >= 2 => {
+                    let raw = u16::from(value_bytes[0]) | (u16::from(value_bytes[1]) << 8);
+                    device.color_y = Some(f32::from(raw) / 65535.0);
+                }
                 (COLOR_CONTROL_CLUSTER_ID, 0x0007) if value_bytes.len() >= 2 => {
                     let raw = u16::from(value_bytes[0]) | (u16::from(value_bytes[1]) << 8);
                     let normalized = (((500_u16.saturating_sub(raw.min(500))) * 100) / (500 - 153)) as u8;
                     device.supports_temperature = true;
                     device.temperature = Some(normalized.min(100));
+                }
+                (COLOR_CONTROL_CLUSTER_ID, 0x0008) => {
+                    if let Some(value) = value_bytes.first() {
+                        device.color_mode = Some(*value);
+                    }
                 }
                 (BASIC_CLUSTER_ID, 0x0004) => {
                     if let Ok(text) = String::from_utf8(value_bytes.to_vec()) {
@@ -3480,6 +3784,59 @@ fn build_color_temperature_command_payload(temperature: u8, sequence: u8) -> Vec
         0x00,
         0x00,
     ]
+}
+
+/// Build a ZCL `Move to Color` (0x07) payload for the Color Control cluster (0x0300).
+///
+/// `x` and `y` are CIE 1931 chromaticity coordinates in the 0.0–1.0 range.
+/// They are scaled to uint16 (0–65535) for the ZCL wire format.
+/// Transition time is set to 0 (immediate).
+fn build_color_xy_command_payload(x: f32, y: f32, sequence: u8) -> Vec<u8> {
+    let raw_x = (x.clamp(0.0, 1.0) * 65535.0) as u16;
+    let raw_y = (y.clamp(0.0, 1.0) * 65535.0) as u16;
+    vec![
+        ZCL_CLUSTER_COMMAND_FRAME_CONTROL,
+        sequence,
+        ZCL_COLOR_CONTROL_COMMAND_MOVE_TO_COLOR,
+        (raw_x & 0xff) as u8,
+        (raw_x >> 8) as u8,
+        (raw_y & 0xff) as u8,
+        (raw_y >> 8) as u8,
+        0x00, // transition time low
+        0x00, // transition time high
+    ]
+}
+
+/// Build a ZCL `Trigger Effect` (0x40) payload for the Identify cluster (0x0003).
+///
+/// Standard ZCL effects: blink=0x00, breathe=0x01, okay=0x02,
+/// channel_change=0x0B, finish_effect=0xFE, stop_effect=0xFF.
+fn build_identify_trigger_effect_payload(effect_id: u8, sequence: u8) -> Vec<u8> {
+    vec![
+        ZCL_CLUSTER_COMMAND_FRAME_CONTROL,
+        sequence,
+        ZCL_IDENTIFY_TRIGGER_EFFECT_COMMAND_ID,
+        effect_id,
+        0x00, // effect variant (default)
+    ]
+}
+
+/// Build a Philips manufacturer-specific `multiColor` command payload for
+/// the Hue effects cluster (0xFC03, manufacturer code 0x100B).
+///
+/// `start_payload` should be either:
+/// - Start: `[0x21, 0x00, 0x01, effectId]` (candle=1, fireplace=2, colorloop=3, etc.)
+/// - Stop:  `[0x20, 0x00, 0x00]`
+fn build_philips_hue_effect_payload(start_payload: &[u8], sequence: u8) -> Vec<u8> {
+    let mut payload = vec![
+        ZCL_MANU_CLUSTER_COMMAND_FRAME_CONTROL,
+        (PHILIPS_MANUFACTURER_CODE & 0xff) as u8,
+        (PHILIPS_MANUFACTURER_CODE >> 8) as u8,
+        sequence,
+        PHILIPS_MULTI_COLOR_COMMAND_ID,
+    ];
+    payload.extend_from_slice(start_payload);
+    payload
 }
 
 struct SimpleDescriptor {
@@ -3622,12 +3979,16 @@ async fn sync_status_devices(
             output_clusters: device.output_clusters.clone(),
             supports_brightness: device.supports_brightness,
             supports_temperature: device.supports_temperature,
+            supports_color: device.has_color_control_cluster,
             device_type: device.device_type,
             connected: device.connected,
             reachable: device.reachable,
             is_on: device.is_on,
             brightness: device.brightness,
             temperature: device.temperature,
+            color_x: device.color_x,
+            color_y: device.color_y,
+            color_mode: device.color_mode,
             model: device.model.clone(),
             manufacturer: device.manufacturer.clone(),
             last_seen: device.last_seen.map(|instant| {
@@ -3696,6 +4057,9 @@ fn seed_known_device(device: NativeKnownDevice) -> DiscoveredDevice {
         is_on: false,
         brightness: 0,
         temperature: None,
+        color_x: None,
+        color_y: None,
+        color_mode: None,
         interview_completed: device.endpoint.is_some(),
         model: device.model,
         manufacturer: device.manufacturer,
@@ -3705,6 +4069,8 @@ fn seed_known_device(device: NativeKnownDevice) -> DiscoveredDevice {
         last_seen: None,
         desired_brightness: None,
         desired_temperature: None,
+        desired_color_x: None,
+        desired_color_y: None,
         desired_state_applied: true,
     }
 }
@@ -3818,6 +4184,9 @@ mod tests {
             is_on: true,
             brightness: 100,
             temperature: None,
+            color_x: None,
+            color_y: None,
+            color_mode: None,
             interview_completed: true,
             model: Some("LWA001".to_string()),
             manufacturer: Some("Signify Netherlands B.V.".to_string()),
@@ -3827,6 +4196,8 @@ mod tests {
             last_seen: None,
             desired_brightness: None,
             desired_temperature: None,
+            desired_color_x: None,
+            desired_color_y: None,
             desired_state_applied: true,
         };
 
@@ -3856,6 +4227,9 @@ mod tests {
             is_on: true,
             brightness: 100,
             temperature: None,
+            color_x: None,
+            color_y: None,
+            color_mode: None,
             interview_completed: true,
             model: Some("LTG002".to_string()),
             manufacturer: Some("Signify Netherlands B.V.".to_string()),
@@ -3865,6 +4239,8 @@ mod tests {
             last_seen: None,
             desired_brightness: None,
             desired_temperature: None,
+            desired_color_x: None,
+            desired_color_y: None,
             desired_state_applied: true,
         };
 
@@ -3886,6 +4262,9 @@ mod tests {
             is_on: true,
             brightness: 100,
             temperature: None,
+            color_x: None,
+            color_y: None,
+            color_mode: None,
             interview_completed: true,
             model: Some("LTG002".to_string()),
             manufacturer: Some("Signify Netherlands B.V.".to_string()),
@@ -3895,6 +4274,8 @@ mod tests {
             last_seen: None,
             desired_brightness: None,
             desired_temperature: None,
+            desired_color_x: None,
+            desired_color_y: None,
             desired_state_applied: true,
         };
 
