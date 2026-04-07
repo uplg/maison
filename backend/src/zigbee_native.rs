@@ -495,6 +495,10 @@ struct DiscoveredDevice {
     /// `restore_desired_state` successfully re-sends the desired brightness/temperature.
     /// This prevents re-sending every 30 s — we only restore on the unreachable→reachable transition.
     desired_state_applied: bool,
+    /// Timestamp of the last `request_known_device_discovery` call for this device.
+    /// Used to rate-limit intercept-on-wake discovery so a chatty uninterviewed
+    /// device cannot starve the command channel with endless EZSP round-trips.
+    last_discovery_at: Option<Instant>,
 }
 
 async fn run_native_driver(
@@ -2271,6 +2275,7 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
             desired_color_x: None,
             desired_color_y: None,
             desired_state_applied: true,
+            last_discovery_at: None,
         });
     }
 }
@@ -2841,6 +2846,11 @@ async fn request_known_device_discovery(context: &mut EzspContext, node_id: u16)
         return;
     }
 
+    // Record the timestamp so intercept-on-wake can apply a cooldown.
+    if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+        device.last_discovery_at = Some(Instant::now());
+    }
+
     if should_probe_active_endpoints(&target) {
         // Send Active_EP_req (standard discovery path).
         let _ = request_active_endpoints(context, node_id).await;
@@ -3343,6 +3353,14 @@ async fn handle_incoming_cluster(
     }
 
     if needs_interview {
+        // ZDO responses (profile 0x0000) such as Active_EP_rsp (0x8005) and
+        // Simple_Desc_rsp (0x8004) are replies to our OWN discovery requests.
+        // They must NOT re-trigger discovery — doing so creates a feedback loop
+        // where every ZDO response causes 3+ new EZSP round-trips whose
+        // responses trigger yet more discovery, starving the command channel and
+        // making HTTP requests hang indefinitely.
+        let is_zdo_response = profile_id == ZDO_PROFILE_ID;
+
         let is_light_cluster = cluster_id == ON_OFF_CLUSTER_ID || cluster_id == LEVEL_CONTROL_CLUSTER_ID;
         let is_philips_cluster = cluster_id == PHILIPS_SPECIFIC_CLUSTER_ID;
         let is_cluster_specific_command = payload.len() >= 3 && (payload[0] & 0x03) == 0x01;
@@ -3373,17 +3391,38 @@ async fn handle_incoming_cluster(
                 bind_remote_clusters(context, node_id, &eui64).await;
             }
             // Fall through to the remote routing below — don't trigger ZDO discovery.
-        } else {
-            info!(
-                node_id = format_args!("0x{node_id:04x}"),
-                cluster_id = format_args!("0x{cluster_id:04x}"),
-                "device is awake but uninterviewed — triggering discovery now"
-            );
-            // Reset attempt counter so we get fresh tries from this wake window.
-            if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
-                device.interview_attempts = 0;
+        } else if !is_zdo_response {
+            // The device sent an application-layer message (not a ZDO
+            // response), so it is genuinely awake.  Rate-limit discovery to
+            // at most once per 10 seconds to avoid flooding the EZSP pipeline.
+            const DISCOVERY_COOLDOWN: StdDuration = StdDuration::from_secs(10);
+            let should_discover = context
+                .joined_devices
+                .iter()
+                .find(|d| d.node_id == node_id)
+                .map(|d| {
+                    d.last_discovery_at
+                        .map_or(true, |ts| ts.elapsed() >= DISCOVERY_COOLDOWN)
+                })
+                .unwrap_or(false);
+
+            if should_discover {
+                info!(
+                    node_id = format_args!("0x{node_id:04x}"),
+                    cluster_id = format_args!("0x{cluster_id:04x}"),
+                    "device is awake but uninterviewed — triggering discovery now"
+                );
+                if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+                    device.last_discovery_at = Some(Instant::now());
+                }
+                request_known_device_discovery(context, node_id).await;
+            } else {
+                debug!(
+                    node_id = format_args!("0x{node_id:04x}"),
+                    cluster_id = format_args!("0x{cluster_id:04x}"),
+                    "device is awake but discovery cooldown active — skipping"
+                );
             }
-            request_known_device_discovery(context, node_id).await;
         }
     }
 
@@ -4096,6 +4135,7 @@ fn seed_known_device(device: NativeKnownDevice) -> DiscoveredDevice {
         desired_color_x: None,
         desired_color_y: None,
         desired_state_applied: true,
+        last_discovery_at: None,
     }
 }
 
@@ -4224,6 +4264,7 @@ mod tests {
             desired_color_x: None,
             desired_color_y: None,
             desired_state_applied: true,
+            last_discovery_at: None,
         };
 
         assert!(!should_probe_active_endpoints(&base));
@@ -4268,6 +4309,7 @@ mod tests {
             desired_color_x: None,
             desired_color_y: None,
             desired_state_applied: true,
+            last_discovery_at: None,
         };
 
         assert!(!should_probe_active_endpoints(&known));
@@ -4304,6 +4346,7 @@ mod tests {
             desired_color_x: None,
             desired_color_y: None,
             desired_state_applied: true,
+            last_discovery_at: None,
         };
 
         device.supports_temperature = device.supports_temperature && device.has_color_control_cluster;
