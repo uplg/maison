@@ -440,6 +440,9 @@ struct EzspContext {
     touchlink_found_networks: Vec<TouchlinkFoundNetwork>,
     /// Set to `true` while a Touchlink scan is in progress, `false` when ScanComplete fires.
     touchlink_scan_in_progress: bool,
+    /// Number of consecutive command errors without any success.  Used to detect
+    /// a silently-broken pipeline that returns errors instead of timing out.
+    consecutive_errors: u32,
 }
 
 /// A ZLL device discovered during a Touchlink scan.
@@ -684,10 +687,58 @@ async fn run_native_driver(
                     match &result {
                         Ok(()) => {
                             context.last_activity = Instant::now();
+                            context.consecutive_errors = 0;
                             sync_status_devices(&status, &context.joined_devices).await;
                         }
                         Err(error) => {
-                            warn!(serial_port = %serial_port, error = %error, "native zigbee command failed");
+                            context.consecutive_errors += 1;
+                            let error_msg = error.to_string();
+                            warn!(
+                                serial_port = %serial_port,
+                                error = %error_msg,
+                                consecutive_errors = context.consecutive_errors,
+                                "native zigbee command failed"
+                            );
+
+                            // Detect transport-level corruption that makes the
+                            // pipeline permanently non-functional.  These errors
+                            // mean the ASH serial framing is desynchronised and
+                            // no subsequent command will succeed.
+                            let is_transport_corruption =
+                                error_msg.contains("Too many bytes to decode")
+                                || error_msg.contains("frame too short")
+                                || error_msg.contains("wrong CRC")
+                                || error_msg.contains("communication failure");
+
+                            if is_transport_corruption {
+                                error!(
+                                    serial_port = %serial_port,
+                                    error = %error_msg,
+                                    "EZSP transport corruption detected — triggering reconnect"
+                                );
+                                let reason = format!("EZSP transport corruption: {error_msg}");
+                                let _ = request.reply_tx.send(result);
+                                break 'event_loop Some(reason);
+                            }
+
+                            // Safety net: if commands fail repeatedly without
+                            // any success in between, the pipeline is likely
+                            // dead even if the error messages don't match our
+                            // known corruption patterns.
+                            const MAX_CONSECUTIVE_ERRORS: u32 = 5;
+                            if context.consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                                error!(
+                                    serial_port = %serial_port,
+                                    consecutive_errors = context.consecutive_errors,
+                                    "too many consecutive EZSP errors — triggering reconnect"
+                                );
+                                let reason = format!(
+                                    "{} consecutive EZSP command failures",
+                                    context.consecutive_errors,
+                                );
+                                let _ = request.reply_tx.send(result);
+                                break 'event_loop Some(reason);
+                            }
                         }
                     }
                     if let Err(error) = request.reply_tx.send(result) {
@@ -887,6 +938,7 @@ async fn try_open_ezsp_context(
         last_remote_brightness_step: None,
         touchlink_found_networks: Vec::new(),
         touchlink_scan_in_progress: false,
+        consecutive_errors: 0,
     })
 }
 
