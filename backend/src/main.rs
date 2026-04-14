@@ -62,7 +62,7 @@ fn init_tracing() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "cat_monitor_rust_backend=debug,tower_http=info".into()),
+                .unwrap_or_else(|_| "cat_monitor_rust_backend=info,tower_http=warn".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();

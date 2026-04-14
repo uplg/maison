@@ -36,8 +36,6 @@ cat-monitor/
 │   │       ├── hash_password.rs       # CLI: generate argon2id password hashes
 │   │       ├── recalibrate_tempo.rs   # CLI: offline Tempo calibration
 │   │       ├── tuya_probe.rs          # CLI: Tuya device debug probe
-│   │       ├── zigbee_probe.rs        # CLI: Zigbee network probe
-│   │       ├── zigbee_raw_probe.rs    # CLI: raw serial Zigbee probe
 │   │       └── decode_mitsubishi_ir.rs # CLI: decode Mitsubishi IR packets
 │   └── tests/
 │       ├── tempo_regression.rs        # Integration tests for Tempo endpoints
@@ -304,8 +302,6 @@ cat-monitor/                         # Repository root ("source root" at runtime
 │   │       ├── hash_password.rs     # Argon2 password hasher for users.json
 │   │       ├── recalibrate_tempo.rs # CLI tool to rebuild Tempo calibration
 │   │       ├── tuya_probe.rs        # Tuya device probe
-│   │       ├── zigbee_probe.rs      # Zigbee network probe
-│   │       ├── zigbee_raw_probe.rs  # Raw Zigbee serial probe
 │   │       └── decode_mitsubishi_ir.rs # Mitsubishi IR packet decoder
 │   └── tests/
 │       ├── tempo_regression.rs      # Integration tests for Tempo API

@@ -7,11 +7,44 @@ What it does:
 - flashes your Alpine image to the target SD card
 - downloads or reuses `headless.apkovl.tar.gz` from `macmpi/alpine-linux-headless-bootstrap`
 - copies the overlay to the boot partition root
+- auto-detects the `bootstrap/` directory and uses its files when available
 - generates a default `interfaces` file for DHCP on `eth0` when you do not provide one
 - generates a default `unattended.sh` that sets the hostname to `maison` when you do not provide one
 - optionally injects `authorized_keys`, `interfaces`, `wpa_supplicant.conf`, `unattended.sh`, and `ssh_host_*_key*`
 
-## Basic usage
+## Quick start (recommended)
+
+The repository ships a `bootstrap/unattended.sh` that fully provisions the Pi at first boot (packages, service user, Mosquitto, directory tree). The flash script auto-detects it:
+
+```bash
+scripts/flash-alpine-headless-macos.sh \
+  --image ~/Downloads/alpine-rpi-3.23.3-armhf.img.xz \
+  --disk disk4
+```
+
+After the Pi boots and the unattended script runs, finish the deployment:
+
+```bash
+PI_HOST=pi@<ip> ./deploy.sh build
+PI_HOST=pi@<ip> ./deploy.sh push
+PI_HOST=pi@<ip> ./deploy.sh start
+```
+
+## Bootstrap directory auto-detection
+
+When the `bootstrap/` directory exists at the repository root, the flash script automatically picks up any files it contains:
+
+| File | Purpose |
+|------|---------|
+| `bootstrap/unattended.sh` | First-boot provisioning script |
+| `bootstrap/interfaces` | Network interface config |
+| `bootstrap/wpa_supplicant.conf` | WiFi config |
+| `bootstrap/authorized_keys` | SSH public keys |
+| `bootstrap/ssh-host-keys/` | Pre-generated SSH host keys |
+
+Command-line flags always take precedence over auto-detected files.
+
+## Basic usage without bootstrap/
 
 ```bash
 scripts/flash-alpine-headless-macos.sh \
@@ -34,7 +67,7 @@ scripts/flash-alpine-headless-macos.sh \
   --authorized-keys ~/.ssh/id_ed25519.pub
 ```
 
-## Optional extra files
+## Optional extra files via flags
 
 ```bash
 scripts/flash-alpine-headless-macos.sh \
@@ -49,7 +82,7 @@ scripts/flash-alpine-headless-macos.sh \
 
 ## Default headless behavior
 
-If you do not provide custom files, the script prepares a minimal headless bootstrap setup for you:
+If you do not provide custom files and the `bootstrap/` directory is empty or missing, the script prepares a minimal headless bootstrap setup for you:
 
 - `interfaces`: DHCP on `eth0`
 - `unattended.sh`: sets the hostname to `maison`

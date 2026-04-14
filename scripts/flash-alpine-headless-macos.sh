@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "${SCRIPT_DIR}")"
+BOOTSTRAP_DIR="${REPO_ROOT}/bootstrap"
+
 IMAGE_PATH=""
 DISK_INPUT=""
 OVERLAY_PATH=""
@@ -99,6 +103,39 @@ normalize_disk_names() {
   esac
 
   BOOT_PARTITION="${BLOCK_DISK}s1"
+}
+
+auto_detect_bootstrap_dir() {
+  if [ ! -d "${BOOTSTRAP_DIR}" ]; then
+    return
+  fi
+
+  log "Found bootstrap/ directory at ${BOOTSTRAP_DIR}"
+
+  if [ -z "${UNATTENDED_PATH}" ] && [ -f "${BOOTSTRAP_DIR}/unattended.sh" ]; then
+    UNATTENDED_PATH="${BOOTSTRAP_DIR}/unattended.sh"
+    log "Using bootstrap/unattended.sh"
+  fi
+
+  if [ -z "${INTERFACES_PATH}" ] && [ -f "${BOOTSTRAP_DIR}/interfaces" ]; then
+    INTERFACES_PATH="${BOOTSTRAP_DIR}/interfaces"
+    log "Using bootstrap/interfaces"
+  fi
+
+  if [ -z "${WPA_SUPPLICANT_PATH}" ] && [ -f "${BOOTSTRAP_DIR}/wpa_supplicant.conf" ]; then
+    WPA_SUPPLICANT_PATH="${BOOTSTRAP_DIR}/wpa_supplicant.conf"
+    log "Using bootstrap/wpa_supplicant.conf"
+  fi
+
+  if [ -z "${AUTHORIZED_KEYS_PATH}" ] && [ -f "${BOOTSTRAP_DIR}/authorized_keys" ]; then
+    AUTHORIZED_KEYS_PATH="${BOOTSTRAP_DIR}/authorized_keys"
+    log "Using bootstrap/authorized_keys"
+  fi
+
+  if [ -z "${SSH_HOST_KEYS_DIR}" ] && [ -d "${BOOTSTRAP_DIR}/ssh-host-keys" ]; then
+    SSH_HOST_KEYS_DIR="${BOOTSTRAP_DIR}/ssh-host-keys"
+    log "Using bootstrap/ssh-host-keys/"
+  fi
 }
 
 auto_detect_authorized_keys() {
@@ -354,6 +391,7 @@ main() {
   esac
 
   normalize_disk_names
+  auto_detect_bootstrap_dir
   auto_detect_authorized_keys
   confirm_target_disk
 
@@ -384,6 +422,13 @@ main() {
     printf 'SSH should accept your injected public key.\n'
   else
     printf 'No authorized_keys was injected; follow Alpine headless bootstrap defaults for first login.\n'
+  fi
+  if [ -n "${UNATTENDED_PATH}" ]; then
+    printf '\nThe unattended script will provision the system at first boot.\n'
+    printf 'Once the Pi is online, finish the deployment with:\n'
+    printf '  PI_HOST=pi@<ip> ./deploy.sh build\n'
+    printf '  PI_HOST=pi@<ip> ./deploy.sh push\n'
+    printf '  PI_HOST=pi@<ip> ./deploy.sh start\n'
   fi
 }
 

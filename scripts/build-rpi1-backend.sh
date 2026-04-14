@@ -5,7 +5,6 @@ TARGET="${TARGET:-arm-unknown-linux-musleabihf}"
 TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}"
 MANIFEST="backend/Cargo.toml"
 PACKAGE_NAME="cat-monitor-rust-backend"
-EXTRA_BINS=(zigbee_probe zigbee_raw_probe)
 DEFAULT_RUSTFLAGS="-C target-cpu=arm1176jzf-s"
 
 if ! command -v rustup >/dev/null 2>&1; then
@@ -49,17 +48,4 @@ rustup run "${TOOLCHAIN}" cargo zigbuild \
   --bin "${PACKAGE_NAME}" \
   "$@"
 
-for bin_name in "${EXTRA_BINS[@]}"; do
-  rustup run "${TOOLCHAIN}" cargo zigbuild \
-    --release \
-    --manifest-path "${MANIFEST}" \
-    --target "${TARGET}" \
-    --no-default-features \
-    --bin "${bin_name}" \
-    "$@"
-done
-
 printf '%s\n' "Artifact: target/${TARGET}/release/${PACKAGE_NAME}"
-for bin_name in "${EXTRA_BINS[@]}"; do
-  printf '%s\n' "Artifact: target/${TARGET}/release/${bin_name}"
-done

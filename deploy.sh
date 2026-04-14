@@ -10,8 +10,7 @@ PI_SERVICE_GROUP="${PI_SERVICE_GROUP:-${PI_SERVICE_USER}}"
 PI_ENV_FILE="${PI_ENV_FILE:-${ROOT_DIR}/.env}"
 BACKEND_TARGET="${BACKEND_TARGET:-arm-unknown-linux-musleabihf}"
 BACKEND_BIN="${ROOT_DIR}/backend/target/${BACKEND_TARGET}/release/cat-monitor-rust-backend"
-ZIGBEE_PROBE_BIN="${ROOT_DIR}/backend/target/${BACKEND_TARGET}/release/zigbee_probe"
-ZIGBEE_RAW_PROBE_BIN="${ROOT_DIR}/backend/target/${BACKEND_TARGET}/release/zigbee_raw_probe"
+CLOUDFLARED_BIN="${CLOUDFLARED_BIN:-${ROOT_DIR}/cloudflared-arm}"
 
 RUNTIME_FILES=(
   devices.json
@@ -50,6 +49,7 @@ Environment:
   PI_SERVICE_GROUP Service group on the Pi, default catmonitor
   PI_ENV_FILE      Local env file to deploy, default ./.env
   BACKEND_TARGET   Rust target triple, default arm-unknown-linux-musleabihf
+  CLOUDFLARED_BIN  Path to cross-compiled cloudflared binary, default ./cloudflared-arm
 
 Examples:
   PI_HOST=pi@192.168.1.50 ./deploy.sh all
@@ -156,18 +156,6 @@ push_to_pi() {
     exit 1
   fi
 
-  if [ ! -f "${ZIGBEE_PROBE_BIN}" ]; then
-    printf 'Missing zigbee probe artifact: %s\n' "${ZIGBEE_PROBE_BIN}" >&2
-    printf '%s\n' 'Run ./deploy.sh build first.' >&2
-    exit 1
-  fi
-
-  if [ ! -f "${ZIGBEE_RAW_PROBE_BIN}" ]; then
-    printf 'Missing zigbee raw probe artifact: %s\n' "${ZIGBEE_RAW_PROBE_BIN}" >&2
-    printf '%s\n' 'Run ./deploy.sh build first.' >&2
-    exit 1
-  fi
-
   if [ ! -d "${ROOT_DIR}/frontend/dist" ]; then
     printf '%s\n' 'Missing frontend/dist. Run ./deploy.sh build first.' >&2
     exit 1
@@ -175,12 +163,6 @@ push_to_pi() {
 
   log "Pushing backend artifact"
   rsync_pi -avz "${BACKEND_BIN}" "${PI_HOST}:${PI_APP_DIR}/backend/target/release/"
-
-  log "Pushing zigbee probe artifact"
-  rsync_pi -avz "${ZIGBEE_PROBE_BIN}" "${PI_HOST}:${PI_APP_DIR}/backend/target/release/"
-
-  log "Pushing zigbee raw probe artifact"
-  rsync_pi -avz "${ZIGBEE_RAW_PROBE_BIN}" "${PI_HOST}:${PI_APP_DIR}/backend/target/release/"
 
   log "Pushing frontend bundle"
   rsync_pi -avz "${ROOT_DIR}/frontend/dist/" "${PI_HOST}:${PI_APP_DIR}/frontend/dist/"
@@ -204,6 +186,15 @@ push_to_pi() {
     rsync_pi -avz "${ROOT_DIR}/mosquitto/certs/" "${PI_HOST}:${PI_APP_DIR}/mosquitto/certs/"
   else
     warn "mosquitto/certs is missing locally; TLS listener deployment may fail"
+  fi
+
+  if [ -f "${CLOUDFLARED_BIN}" ]; then
+    log "Pushing cloudflared binary to /usr/local/bin/cloudflared"
+    rsync_pi -avz "${CLOUDFLARED_BIN}" "${PI_HOST}:/usr/local/bin/cloudflared"
+    ssh_pi chmod +x /usr/local/bin/cloudflared
+  else
+    warn "cloudflared-arm binary not found at ${CLOUDFLARED_BIN}; skipping"
+    warn "Build it with: ./scripts/build-cloudflared-armv6.sh"
   fi
 
   for relative_path in "${RUNTIME_FILES[@]}"; do
@@ -313,11 +304,7 @@ chmod 644 /var/log/cat-monitor.log /var/log/cloudflared-cat-monitor.log
 
 if ! command -v cloudflared >/dev/null 2>&1; then
   printf '%s\n' 'Warning: cloudflared is not installed on the Pi.' >&2
-  if [ "${ID:-}" = alpine ]; then
-    printf '%s\n' 'Install it manually on Alpine if you want the tunnel service enabled.' >&2
-  else
-    printf '%s\n' 'Install it manually, then re-run ./deploy.sh start.' >&2
-  fi
+  printf '%s\n' 'Push it with: ./scripts/build-cloudflared-armv6.sh && ./deploy.sh push' >&2
 fi
 
 chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${APP_DIR}/cache" 2>/dev/null || true
