@@ -1,7 +1,8 @@
-use std::{env, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc};
 
 use axum::{
     body::{Body, to_bytes},
+    extract::connect_info::MockConnectInfo,
     http::{Method, Request, StatusCode},
 };
 use cat_monitor_rust_backend::{auth::Claims, build_app_from_config, config::Config};
@@ -76,7 +77,9 @@ async fn broadlink_mitsubishi_filter_returns_only_matching_brand() {
 
 fn test_app() -> axum::Router {
     let config = test_config();
-    build_app_from_config(Arc::new(config)).expect("failed to build test app")
+    build_app_from_config(Arc::new(config))
+        .expect("failed to build test app")
+        .layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))))
 }
 
 async fn request_rust(app: &axum::Router, method: Method, path: &str, body: Option<Value>) -> (StatusCode, Value) {

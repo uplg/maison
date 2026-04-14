@@ -221,7 +221,7 @@ fn tempo_service_error(error: AppError, message: &str) -> axum::response::Respon
         StatusCode::SERVICE_UNAVAILABLE,
         Json(TempoErrorResponse {
             success: false,
-            error: error.to_string(),
+            error: "Tempo service temporarily unavailable".to_string(),
             message: message.to_string(),
         }),
     )

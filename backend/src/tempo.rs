@@ -761,6 +761,7 @@ impl TempoService {
     }
 
     async fn fetch_history_map(&self, season: &str) -> Result<HashMap<String, String>, AppError> {
+        validate_season(season)?;
         if let Some(cached) = self.cached_history(season, false).await {
             return Ok(cached);
         }
@@ -957,6 +958,7 @@ impl TempoService {
     }
 
     async fn load_history_from_cache(&self, season: &str) -> Option<HashMap<String, String>> {
+        validate_season(season).ok()?;
         let path = self.cache_dir.join(format!("tempo_history_{season}.json"));
         let content = std::fs::read_to_string(path).ok()?;
         let payload = serde_json::from_str::<RteTempoResponse>(&content).ok()?;
@@ -1042,7 +1044,24 @@ fn save_calibration(path: &Path, params: &TempoCalibrationParams) -> Result<(), 
     Ok(())
 }
 
+/// Validates that a season string matches the expected `YYYY-YYYY` format to
+/// prevent path traversal attacks when it is interpolated into file paths.
+fn validate_season(season: &str) -> Result<(), AppError> {
+    let is_valid = season.len() == 9
+        && season.as_bytes()[4] == b'-'
+        && season[..4].bytes().all(|b| b.is_ascii_digit())
+        && season[5..].bytes().all(|b| b.is_ascii_digit());
+    if !is_valid {
+        return Err(AppError::http(
+            axum::http::StatusCode::BAD_REQUEST,
+            "Invalid season format. Expected YYYY-YYYY.",
+        ));
+    }
+    Ok(())
+}
+
 fn save_history_cache_file(cache_dir: &Path, season: &str, values: &HashMap<String, String>) -> Result<(), AppError> {
+    validate_season(season)?;
     std::fs::create_dir_all(cache_dir)?;
     let path = cache_dir.join(format!("tempo_history_{season}.json"));
     let payload = RteTempoResponse {

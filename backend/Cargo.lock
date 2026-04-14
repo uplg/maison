@@ -88,7 +88,7 @@ dependencies = [
 [[package]]
 name = "ashv2"
 version = "6.0.0"
-source = "git+https://github.com/uplg/ashv2?branch=main#9f1260eda6c5835251de86baab52cd00485c5ad9"
+source = "git+https://github.com/uplg/ashv2/?branch=main#9f1260eda6c5835251de86baab52cd00485c5ad9"
 dependencies = [
  "bitflags 2.11.0",
  "const_env",
@@ -906,7 +906,7 @@ dependencies = [
 [[package]]
 name = "ezsp"
 version = "3.0.0"
-source = "git+https://github.com/uplg/ezsp?branch=main#2375f525e1b5599518d55521ae6bd02ad247fab3"
+source = "git+https://github.com/uplg/ezsp?rev=2375f525e1b5599518d55521ae6bd02ad247fab3#2375f525e1b5599518d55521ae6bd02ad247fab3"
 dependencies = [
  "ashv2",
  "bitflags 2.11.0",
@@ -2634,7 +2634,7 @@ dependencies = [
 [[package]]
 name = "rust-async-tuyapi"
 version = "1.2.0"
-source = "git+https://github.com/uplg/rust-async-tuyapi?branch=main#b4f3b0c31f47d251c7e13585a8ce1babda984332"
+source = "git+https://github.com/uplg/rust-async-tuyapi?rev=b4f3b0c31f47d251c7e13585a8ce1babda984332#b4f3b0c31f47d251c7e13585a8ce1babda984332"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",

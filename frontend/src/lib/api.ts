@@ -3,6 +3,21 @@ const API_BASE = "/api";
 interface ApiOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
+  /** Skip auto-refresh on 401 (used internally by the refresh call itself). */
+  _skipRefresh?: boolean;
+}
+
+// Mutex to prevent concurrent refresh attempts.
+let refreshPromise: Promise<void> | null = null;
+
+async function attemptRefresh(): Promise<void> {
+  const response = await fetch(`${API_BASE}/auth/refresh`, {
+    method: "POST",
+    credentials: "same-origin",
+  });
+  if (!response.ok) {
+    throw new Error("Refresh failed");
+  }
 }
 
 export async function api<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
@@ -10,12 +25,34 @@ export async function api<T>(endpoint: string, options: ApiOptions = {}): Promis
     "Content-Type": "application/json",
   };
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    method: options.method || "GET",
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-    credentials: "same-origin",
-  });
+  const doFetch = () =>
+    fetch(`${API_BASE}${endpoint}`, {
+      method: options.method || "GET",
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      credentials: "same-origin",
+    });
+
+  let response = await doFetch();
+
+  // On 401, attempt a single transparent refresh and retry the original request.
+  if (response.status === 401 && !options._skipRefresh) {
+    try {
+      // Serialize concurrent refresh attempts — only one in-flight at a time.
+      if (!refreshPromise) {
+        refreshPromise = attemptRefresh().finally(() => {
+          refreshPromise = null;
+        });
+      }
+      await refreshPromise;
+
+      // Retry the original request with the new access token cookie.
+      response = await doFetch();
+    } catch {
+      // Refresh failed — fall through to the normal error handling below,
+      // which will surface the original 401.
+    }
+  }
 
   if (!response.ok) {
     let errorMessage = `API request failed (${response.status})`;
@@ -69,6 +106,12 @@ export const authApi = {
   verify: () => api<VerifyResponse>("/auth/verify", { method: "POST" }),
 
   logout: () => api("/auth/logout", { method: "POST" }),
+
+  refresh: () =>
+    api<{ success: boolean; user: { id: string; username: string; role: string } }>(
+      "/auth/refresh",
+      { method: "POST", _skipRefresh: true },
+    ),
 };
 
 // Device types

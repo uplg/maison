@@ -27,10 +27,13 @@ async fn main() {
 
     tracing::info!(address = %listener.local_addr().expect("local addr"), "listening");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .expect("server error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .expect("server error");
 
     state.shutdown().await;
 }

@@ -16,6 +16,23 @@ pub struct AuthRateLimiter {
     inner: Arc<Mutex<HashMap<String, RateLimitEntry>>>,
 }
 
+/// Server-side store for refresh tokens.
+/// Maps opaque token strings to their associated user data and expiration.
+/// Expired entries are evicted on each lookup to prevent unbounded growth.
+#[derive(Clone, Default)]
+pub struct RefreshTokenStore {
+    inner: Arc<Mutex<HashMap<String, RefreshEntry>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RefreshEntry {
+    pub user_id: String,
+    pub username: String,
+    pub role: String,
+    /// Seconds since epoch when this refresh token expires.
+    pub expires_at: i64,
+}
+
 #[derive(Debug, Clone)]
 struct RateLimitEntry {
     window_started_at: chrono::DateTime<Utc>,
@@ -166,5 +183,28 @@ impl AuthRateLimiter {
 
     pub async fn reset(&self, key: &str) {
         self.inner.lock().await.remove(key);
+    }
+}
+
+impl RefreshTokenStore {
+    /// Store a refresh token with its associated user data.
+    pub async fn insert(&self, token: String, entry: RefreshEntry) {
+        let mut map = self.inner.lock().await;
+        map.insert(token, entry);
+    }
+
+    /// Look up a refresh token. Returns `None` if the token doesn't exist or is expired.
+    /// Evicts all expired entries on each call.
+    pub async fn validate(&self, token: &str) -> Option<RefreshEntry> {
+        let now = Utc::now().timestamp();
+        let mut map = self.inner.lock().await;
+        // Evict expired entries to prevent unbounded growth.
+        map.retain(|_, entry| entry.expires_at > now);
+        map.get(token).cloned()
+    }
+
+    /// Remove a refresh token (used on logout and rotation).
+    pub async fn remove(&self, token: &str) {
+        self.inner.lock().await.remove(token);
     }
 }

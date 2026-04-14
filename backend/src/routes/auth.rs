@@ -1,11 +1,11 @@
-use std::{fs, sync::Arc};
+use std::{fs, net::SocketAddr, sync::Arc};
 
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{ConnectInfo, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{AppendHeaders, IntoResponse},
     routing::post,
 };
 use axum_extra::extract::cookie::{Cookie, SameSite};
@@ -17,10 +17,21 @@ use tracing::{info, warn};
 
 use crate::{
     AppState,
-    auth::{AuthUser, Claims, decode_token, extract_auth_token},
+    auth::{AuthUser, Claims, RefreshEntry, decode_token, extract_auth_token},
     config::Config,
     error::AppError,
 };
+
+use uuid::Uuid;
+
+/// Cookie name for the refresh token.
+const REFRESH_COOKIE_NAME: &str = "maison_refresh";
+
+/// Access token lifetime in minutes.
+const ACCESS_TOKEN_MINUTES: i64 = 15;
+
+/// Refresh token lifetime in days (sliding window).
+const REFRESH_TOKEN_DAYS: i64 = 7;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct User {
@@ -63,11 +74,18 @@ struct LogoutResponse {
     message: &'static str,
 }
 
+#[derive(Debug, Serialize)]
+struct RefreshResponse {
+    success: bool,
+    user: AuthUser,
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/login", post(login_handler))
         .route("/verify", post(verify_handler))
         .route("/logout", post(logout_handler))
+        .route("/refresh", post(refresh_handler))
 }
 
 pub(crate) fn load_users(config: &Config) -> Result<Vec<User>, AppError> {
@@ -115,11 +133,12 @@ pub(crate) fn load_users(config: &Config) -> Result<Vec<User>, AppError> {
 }
 
 async fn login_handler(
-    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let remote_ip = client_ip(&headers);
+    let remote_ip = real_client_ip(&headers, Some(addr));
     let limiter_key = format!("{remote_ip}:{}", body.username.trim().to_ascii_lowercase());
     let rate_limit = state
         .auth_rate_limiter
@@ -146,7 +165,7 @@ async fn login_handler(
     let user = state
         .users
         .iter()
-        .find(|user| user.username == body.username)
+        .find(|user| user.username.eq_ignore_ascii_case(&body.username))
         .ok_or_else(|| {
             warn!(username = %body.username, remote_ip = %remote_ip, "auth login failed");
             AppError::http(StatusCode::UNAUTHORIZED, "Invalid username or password")
@@ -172,12 +191,13 @@ async fn login_handler(
 
     state.auth_rate_limiter.reset(&limiter_key).await;
 
-    let expiration = Utc::now() + Duration::days(7);
+    // Issue short-lived access token (15 minutes).
+    let access_expiration = Utc::now() + Duration::minutes(ACCESS_TOKEN_MINUTES);
     let claims = Claims {
         user_id: user.id.clone(),
         username: user.username.clone(),
         role: user.role.clone(),
-        exp: expiration.timestamp() as usize,
+        exp: access_expiration.timestamp() as usize,
     };
 
     let token = encode(
@@ -186,18 +206,45 @@ async fn login_handler(
         &EncodingKey::from_secret(state.config.jwt_secret.as_bytes()),
     )?;
 
-    let cookie = Cookie::build((state.config.auth_cookie_name.clone(), token))
+    let access_cookie = Cookie::build((state.config.auth_cookie_name.clone(), token))
         .http_only(true)
         .secure(state.config.auth_cookie_secure)
         .same_site(SameSite::Lax)
         .path("/")
-        .max_age(CookieDuration::days(7))
+        .max_age(CookieDuration::minutes(ACCESS_TOKEN_MINUTES))
+        .build();
+
+    // Issue long-lived refresh token (7-day sliding window).
+    let refresh_token = Uuid::new_v4().to_string();
+    let refresh_expires_at = (Utc::now() + Duration::days(REFRESH_TOKEN_DAYS)).timestamp();
+    state
+        .refresh_store
+        .insert(
+            refresh_token.clone(),
+            RefreshEntry {
+                user_id: user.id.clone(),
+                username: user.username.clone(),
+                role: user.role.clone(),
+                expires_at: refresh_expires_at,
+            },
+        )
+        .await;
+
+    let refresh_cookie = Cookie::build((REFRESH_COOKIE_NAME.to_string(), refresh_token))
+        .http_only(true)
+        .secure(state.config.auth_cookie_secure)
+        .same_site(SameSite::Lax)
+        .path("/api/auth")
+        .max_age(CookieDuration::days(REFRESH_TOKEN_DAYS))
         .build();
 
     info!(username = %user.username, remote_ip = %remote_ip, "auth login succeeded");
 
     Ok((
-        [(axum::http::header::SET_COOKIE, cookie.to_string())],
+        AppendHeaders([
+            (axum::http::header::SET_COOKIE, access_cookie.to_string()),
+            (axum::http::header::SET_COOKIE, refresh_cookie.to_string()),
+        ]),
         Json(LoginResponse {
             success: true,
             user: AuthUser {
@@ -223,8 +270,98 @@ async fn verify_handler(
     }))
 }
 
-async fn logout_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let cookie = Cookie::build((state.config.auth_cookie_name.clone(), String::new()))
+async fn refresh_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, AppError> {
+    // Extract the refresh token from the cookie.
+    let refresh_token = extract_cookie_value(&headers, REFRESH_COOKIE_NAME)
+        .ok_or_else(|| AppError::http(StatusCode::UNAUTHORIZED, "No refresh token"))?;
+
+    // Validate and consume the old refresh token.
+    let entry = state
+        .refresh_store
+        .validate(&refresh_token)
+        .await
+        .ok_or_else(|| AppError::http(StatusCode::UNAUTHORIZED, "Invalid or expired refresh token"))?;
+
+    // Rotate: delete old token immediately.
+    state.refresh_store.remove(&refresh_token).await;
+
+    // Issue a new short-lived access token.
+    let access_expiration = Utc::now() + Duration::minutes(ACCESS_TOKEN_MINUTES);
+    let claims = Claims {
+        user_id: entry.user_id.clone(),
+        username: entry.username.clone(),
+        role: entry.role.clone(),
+        exp: access_expiration.timestamp() as usize,
+    };
+
+    let token = encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(state.config.jwt_secret.as_bytes()),
+    )
+    .map_err(|_| AppError::http(StatusCode::INTERNAL_SERVER_ERROR, "Failed to issue access token"))?;
+
+    let access_cookie = Cookie::build((state.config.auth_cookie_name.clone(), token))
+        .http_only(true)
+        .secure(state.config.auth_cookie_secure)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(CookieDuration::minutes(ACCESS_TOKEN_MINUTES))
+        .build();
+
+    // Issue a new refresh token (rotation + sliding window).
+    let new_refresh_token = Uuid::new_v4().to_string();
+    let new_refresh_expires_at = (Utc::now() + Duration::days(REFRESH_TOKEN_DAYS)).timestamp();
+    state
+        .refresh_store
+        .insert(
+            new_refresh_token.clone(),
+            RefreshEntry {
+                user_id: entry.user_id.clone(),
+                username: entry.username.clone(),
+                role: entry.role.clone(),
+                expires_at: new_refresh_expires_at,
+            },
+        )
+        .await;
+
+    let refresh_cookie = Cookie::build((REFRESH_COOKIE_NAME.to_string(), new_refresh_token))
+        .http_only(true)
+        .secure(state.config.auth_cookie_secure)
+        .same_site(SameSite::Lax)
+        .path("/api/auth")
+        .max_age(CookieDuration::days(REFRESH_TOKEN_DAYS))
+        .build();
+
+    Ok((
+        AppendHeaders([
+            (axum::http::header::SET_COOKIE, access_cookie.to_string()),
+            (axum::http::header::SET_COOKIE, refresh_cookie.to_string()),
+        ]),
+        Json(RefreshResponse {
+            success: true,
+            user: AuthUser {
+                id: entry.user_id,
+                username: entry.username,
+                role: entry.role,
+            },
+        }),
+    ))
+}
+
+async fn logout_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    // Revoke the refresh token so it cannot be reused.
+    if let Some(refresh_token) = extract_cookie_value(&headers, REFRESH_COOKIE_NAME) {
+        state.refresh_store.remove(&refresh_token).await;
+    }
+
+    let access_cookie = Cookie::build((state.config.auth_cookie_name.clone(), String::new()))
         .http_only(true)
         .secure(state.config.auth_cookie_secure)
         .same_site(SameSite::Lax)
@@ -232,8 +369,19 @@ async fn logout_handler(State(state): State<AppState>) -> impl IntoResponse {
         .max_age(CookieDuration::seconds(0))
         .build();
 
+    let refresh_cookie = Cookie::build((REFRESH_COOKIE_NAME.to_string(), String::new()))
+        .http_only(true)
+        .secure(state.config.auth_cookie_secure)
+        .same_site(SameSite::Lax)
+        .path("/api/auth")
+        .max_age(CookieDuration::seconds(0))
+        .build();
+
     (
-        [(axum::http::header::SET_COOKIE, cookie.to_string())],
+        AppendHeaders([
+            (axum::http::header::SET_COOKIE, access_cookie.to_string()),
+            (axum::http::header::SET_COOKIE, refresh_cookie.to_string()),
+        ]),
         Json(LogoutResponse {
             success: true,
             message: "Logged out successfully",
@@ -241,15 +389,51 @@ async fn logout_handler(State(state): State<AppState>) -> impl IntoResponse {
     )
 }
 
-pub(crate) type SharedUsers = Arc<Vec<User>>;
+/// Determine the real client IP address from trusted proxy headers with
+/// a fallback to the TCP peer address.
+///
+/// Resolution order:
+/// 1. `CF-Connecting-IP` — set by Cloudflare, trustworthy in production.
+/// 2. First entry of `X-Forwarded-For` — set by most reverse proxies.
+/// 3. TCP peer address via `ConnectInfo<SocketAddr>` (may be `None` if the
+///    server was not configured with `into_make_service_with_connect_info`).
+/// 4. `"unknown"` as a final fallback so the rate limiter still works
+///    (all unknown clients share a single bucket, which is conservative).
+fn real_client_ip(headers: &HeaderMap, peer: Option<SocketAddr>) -> String {
+    if let Some(cf_ip) = headers
+        .get("CF-Connecting-IP")
+        .and_then(|v| v.to_str().ok())
+    {
+        return cf_ip.trim().to_string();
+    }
 
-fn client_ip(headers: &HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .or_else(|| headers.get("x-real-ip").and_then(|value| value.to_str().ok()))
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    if let Some(xff) = headers
+        .get("X-Forwarded-For")
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(first) = xff.split(',').next() {
+            let trimmed = first.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+
+    peer.map(|addr| addr.ip().to_string())
         .unwrap_or_else(|| "unknown".to_string())
 }
+
+/// Extract a named cookie value from the request headers.
+fn extract_cookie_value<'a>(headers: &'a HeaderMap, cookie_name: &str) -> Option<&'a str> {
+    headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookie_header| {
+            cookie_header
+                .split(';')
+                .filter_map(|cookie| cookie.trim().split_once('='))
+                .find_map(|(name, value)| (name == cookie_name).then_some(value))
+        })
+}
+
+pub(crate) type SharedUsers = Arc<Vec<User>>;

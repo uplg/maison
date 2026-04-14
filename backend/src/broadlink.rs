@@ -452,16 +452,38 @@ fn load_stored_codes(content: &str) -> Result<StoredCodes, AppError> {
 }
 
 fn parse_ipv4(value: &str) -> Result<Ipv4Addr, AppError> {
-    value.parse::<Ipv4Addr>().map_err(|_| {
+    let addr = value.parse::<Ipv4Addr>().map_err(|_| {
         AppError::http(
             axum::http::StatusCode::BAD_REQUEST,
             format!("Invalid IPv4 address: {value}"),
         )
-    })
+    })?;
+    validate_device_ip(addr)?;
+    Ok(addr)
 }
 
 fn parse_optional_ipv4(value: Option<&str>) -> Result<Option<Ipv4Addr>, AppError> {
     value.map(parse_ipv4).transpose()
+}
+
+/// Validates that a device IP is safe to contact. Allows RFC1918 private
+/// addresses (expected LAN devices) but rejects loopback, link-local,
+/// unspecified, broadcast, and multicast addresses.
+fn validate_device_ip(addr: Ipv4Addr) -> Result<(), AppError> {
+    if addr.is_loopback()
+        || addr.is_link_local()
+        || addr.is_unspecified()
+        || addr.is_broadcast()
+        || addr.is_multicast()
+    {
+        return Err(AppError::http(
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("Device IP address is not allowed: {addr}"),
+        ));
+    }
+    // Block the cloud metadata endpoint (169.254.169.254 is already caught by
+    // is_link_local, but also reject the full /16 range for safety).
+    Ok(())
 }
 
 fn map_discovered_device(device: Device) -> BroadlinkDiscoveredDevice {

@@ -1,7 +1,8 @@
-use std::{env, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc};
 
 use axum::{
     body::{to_bytes, Body},
+    extract::connect_info::MockConnectInfo,
     http::{Request, StatusCode},
 };
 use chrono::Utc;
@@ -116,7 +117,9 @@ async fn tempo_recalibration_produces_metrics_without_persisting() {
 async fn request_rust(path: &str) -> (StatusCode, Value) {
     let config = test_config();
     let token = rust_test_token(&config.jwt_secret);
-    let app = build_app_from_config(Arc::new(config)).expect("failed to build test app");
+    let app = build_app_from_config(Arc::new(config))
+        .expect("failed to build test app")
+        .layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))));
 
     let request = Request::builder()
         .method("GET")

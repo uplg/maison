@@ -24,12 +24,13 @@ use axum::Router;
 use axum::middleware::{self, Next};
 use axum::http::header;
 use axum::response::Response;
-use auth::AuthRateLimiter;
+use auth::{AuthRateLimiter, RefreshTokenStore};
 use broadlink::BroadlinkManager;
 use config::Config;
 use error::AppError;
 use hue::HueManager;
 use nabaztag::NabaztagManager;
+use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use routes::auth::{load_users, SharedUsers};
 use meross::MerossManager;
@@ -42,6 +43,7 @@ pub struct AppState {
     pub(crate) config: Arc<Config>,
     pub(crate) users: SharedUsers,
     pub(crate) auth_rate_limiter: AuthRateLimiter,
+    pub(crate) refresh_store: RefreshTokenStore,
     pub(crate) broadlink: BroadlinkManager,
     pub(crate) hue: HueManager,
     pub(crate) meross: MerossManager,
@@ -69,6 +71,7 @@ pub fn build_app_from_config(config: Arc<Config>) -> Result<Router, AppError> {
 pub fn build_app_parts_from_config(config: Arc<Config>) -> Result<(Router, AppState), AppError> {
     let users = Arc::new(load_users(&config)?);
     let auth_rate_limiter = AuthRateLimiter::default();
+    let refresh_store = RefreshTokenStore::default();
     let broadlink = BroadlinkManager::new(&config.broadlink_codes_path)?;
     let hue = HueManager::new(config.as_ref())?;
     let meross = MerossManager::new(&config.meross_devices_path)?;
@@ -84,6 +87,7 @@ pub fn build_app_parts_from_config(config: Arc<Config>) -> Result<(Router, AppSt
         config,
         users,
         auth_rate_limiter,
+        refresh_store,
         broadlink,
         hue,
         meross,
@@ -136,8 +140,20 @@ pub fn build_app(state: AppState) -> Router {
         app.merge(routes::root::router())
     };
 
+    // CORS: reject all cross-origin requests. The frontend is served from the
+    // same origin so legitimate requests never need CORS.
     app.layer(middleware::from_fn(security_headers))
-        .layer(TraceLayer::new_for_http())
+        .layer(CorsLayer::new())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &axum::extract::Request| {
+                    tracing::info_span!(
+                        "http",
+                        method = %request.method(),
+                        uri = %request.uri(),
+                    )
+                }),
+        )
         .with_state(state)
 }
 
@@ -150,6 +166,8 @@ async fn security_headers(request: axum::extract::Request, next: Next) -> Respon
         header::STRICT_TRANSPORT_SECURITY,
         "max-age=63072000; includeSubDomains".parse().unwrap(),
     );
+    // Note: style-src 'unsafe-inline' is required because the React frontend uses
+    // inline styles (e.g. dynamic positioning and color previews in device controls).
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'".parse().unwrap(),
