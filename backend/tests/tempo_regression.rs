@@ -73,9 +73,20 @@ async fn tempo_calibration_reads_migrated_calibration_file() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.get("success").and_then(Value::as_bool), Some(true));
     assert_eq!(body.get("calibrated").and_then(Value::as_bool), Some(true));
+
+    // Read the expected date from the actual calibration file instead of hardcoding it,
+    // since recalibration updates this value.
+    let calibration_file = workspace_root().join("cache/tempo/calibration_params.json");
+    let raw = std::fs::read_to_string(&calibration_file).expect("calibration file should exist");
+    let expected: Value = serde_json::from_str(&raw).expect("calibration file should be valid json");
+    let expected_date = expected
+        .get("calibration_date")
+        .and_then(Value::as_str)
+        .expect("calibration file should have calibration_date");
+
     assert_eq!(
         body.pointer("/params/calibration_date").and_then(Value::as_str),
-        Some("2026-03-02")
+        Some(expected_date)
     );
 }
 
@@ -144,6 +155,8 @@ fn test_config() -> Config {
         hue_blacklist_path: source_root.join("hue-lamps-blacklist.json"),
         zigbee_lamps_path: source_root.join("zigbee-lamps.json"),
         zigbee_lamps_blacklist_path: source_root.join("zigbee-lamps-blacklist.json"),
+        nabaztag_config_path: source_root.join("nabaztag.json"),
+        nabaztag_host: None,
         mqtt_host: "127.0.0.1".to_string(),
         mqtt_port: 1883,
         mqtt_username: None,

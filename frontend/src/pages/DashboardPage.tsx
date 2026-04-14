@@ -12,7 +12,8 @@ import { ZigbeeLampCard, ZigbeePairingPanel } from "@/components/devices/ZigbeeL
 import { BroadlinkClimateControl } from "@/components/devices/BroadlinkClimateControl";
 import { MerossPlugCard } from "@/components/devices/MerossPlugControl";
 import { TempoCard } from "@/components/devices/TempoCard";
-import { NabaztagCard } from "@/components/devices/NabaztagControl";
+// Nabaztag is disabled while the physical device is being repaired.
+// import { NabaztagCard } from "@/components/devices/NabaztagControl";
 import { DashboardSectionHeader } from "@/components/dashboard/DashboardSectionHeader";
 import {
   Utensils,
@@ -27,7 +28,6 @@ import {
   Plug,
   Search,
   Snowflake,
-  Rabbit,
 } from "lucide-react";
 
 const deviceIcons: Record<string, React.ReactNode> = {
@@ -294,7 +294,7 @@ export function DashboardPage() {
     <div className="space-y-5">
       <TempoCard />
 
-      {/* Nabaztag section */}
+      {/* Nabaztag section — disabled while the physical device is being repaired.
       <section className="space-y-4">
         <DashboardSectionHeader
           icon={<Rabbit className="h-5 w-5" />}
@@ -306,6 +306,7 @@ export function DashboardPage() {
           <NabaztagCard />
         </div>
       </section>
+      */}
 
       {!isHueDisabled && (
         <section className="space-y-4">

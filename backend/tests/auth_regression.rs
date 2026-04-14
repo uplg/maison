@@ -108,6 +108,8 @@ fn test_config() -> Config {
         hue_blacklist_path: source_root.join("hue-lamps-blacklist.json"),
         zigbee_lamps_path: source_root.join("zigbee-lamps.json"),
         zigbee_lamps_blacklist_path: source_root.join("zigbee-lamps-blacklist.json"),
+        nabaztag_config_path: source_root.join("nabaztag.json"),
+        nabaztag_host: None,
         mqtt_host: "127.0.0.1".to_string(),
         mqtt_port: 1883,
         mqtt_username: None,

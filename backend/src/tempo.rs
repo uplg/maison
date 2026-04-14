@@ -397,6 +397,8 @@ impl TempoService {
     pub fn new(source_root: PathBuf) -> Result<Self, AppError> {
         let client = reqwest::Client::builder()
             .user_agent("CatMonitor-Rust/0.1")
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
             .build()?;
         let cache_dir = source_root.join("cache").join("tempo");
         let calibration_path = cache_dir.join("calibration_params.json");

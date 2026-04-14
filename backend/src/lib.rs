@@ -21,6 +21,9 @@ pub use tempo::TempoService;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::middleware::{self, Next};
+use axum::http::header;
+use axum::response::Response;
 use auth::AuthRateLimiter;
 use broadlink::BroadlinkManager;
 use config::Config;
@@ -115,7 +118,8 @@ pub fn build_app(state: AppState) -> Router {
         .nest("/devices", routes::devices::router())
         .nest("/hue-lamps", routes::hue::router())
         .nest("/meross", routes::meross::router())
-        .nest("/nabaztag", routes::nabaztag::router())
+        // Nabaztag is disabled until the physical device is repaired.
+        // .nest("/nabaztag", routes::nabaztag::router())
         .nest("/tempo", routes::tempo::router())
         .nest("/zigbee", routes::zigbee::router());
 
@@ -132,7 +136,29 @@ pub fn build_app(state: AppState) -> Router {
         app.merge(routes::root::router())
     };
 
-    app.layer(TraceLayer::new_for_http()).with_state(state)
+    app.layer(middleware::from_fn(security_headers))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+async fn security_headers(request: axum::extract::Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(header::X_FRAME_OPTIONS, "DENY".parse().unwrap());
+    headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
+    headers.insert(
+        header::STRICT_TRANSPORT_SECURITY,
+        "max-age=63072000; includeSubDomains".parse().unwrap(),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'".parse().unwrap(),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        "strict-origin-when-cross-origin".parse().unwrap(),
+    );
+    response
 }
 
 impl AppState {

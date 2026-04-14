@@ -44,9 +44,9 @@ interface LitterBoxControlProps {
 export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [cleanDelay, setCleanDelay] = useState([120]);
-  const [sleepStart, setSleepStart] = useState("23:00");
-  const [sleepEnd, setSleepEnd] = useState("07:00");
+  const [cleanDelayOverride, setCleanDelayOverride] = useState<number[] | null>(null);
+  const [sleepStartOverride, setSleepStartOverride] = useState<string | null>(null);
+  const [sleepEndOverride, setSleepEndOverride] = useState<string | null>(null);
   const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
 
   const { data: statusData, isLoading } = useQuery({
@@ -78,6 +78,9 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
       litterBoxApi.settings(deviceId, settings),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["litter-box", deviceId] });
+      setCleanDelayOverride(null);
+      setSleepStartOverride(null);
+      setSleepEndOverride(null);
       toast({
         title: t("litterBox.settingsUpdated"),
       });
@@ -124,6 +127,11 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
         };
       }
     | undefined;
+
+  // Derive form values: use local override if user touched the control, otherwise server data, otherwise fallback.
+  const cleanDelay = cleanDelayOverride ?? [parsedStatus?.clean_delay?.seconds ?? 120];
+  const sleepStart = sleepStartOverride ?? parsedStatus?.sleep_mode?.start_time_formatted ?? "23:00";
+  const sleepEnd = sleepEndOverride ?? parsedStatus?.sleep_mode?.end_time_formatted ?? "07:00";
 
   if (isLoading) {
     return (
@@ -198,7 +206,7 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
                 <div className="flex items-center gap-4">
                   <Slider
                     value={cleanDelay}
-                    onValueChange={setCleanDelay}
+                    onValueChange={setCleanDelayOverride}
                     min={60}
                     max={1800}
                     step={60}
@@ -376,7 +384,7 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
                   <Input
                     type="time"
                     value={sleepStart}
-                    onChange={(e) => setSleepStart(e.target.value)}
+                    onChange={(e) => setSleepStartOverride(e.target.value)}
                   />
                   {parsedStatus?.sleep_mode?.start_time_formatted && (
                     <p className="text-xs text-muted-foreground">
@@ -389,7 +397,7 @@ export function LitterBoxControl({ deviceId }: LitterBoxControlProps) {
                   <Input
                     type="time"
                     value={sleepEnd}
-                    onChange={(e) => setSleepEnd(e.target.value)}
+                    onChange={(e) => setSleepEndOverride(e.target.value)}
                   />
                   {parsedStatus?.sleep_mode?.end_time_formatted && (
                     <p className="text-xs text-muted-foreground">

@@ -17,13 +17,26 @@ export async function api<T>(endpoint: string, options: ApiOptions = {}): Promis
     credentials: "same-origin",
   });
 
-  const data = await response.json();
-
   if (!response.ok) {
-    throw new Error(data.error || "API request failed");
+    let errorMessage = `API request failed (${response.status})`;
+    try {
+      const data = await response.json();
+      if (data.error) {
+        errorMessage = data.error;
+      }
+    } catch {
+      // Response body is not JSON (empty, HTML, etc.) — keep the default message.
+    }
+    throw new Error(errorMessage);
   }
 
-  return data;
+  // Handle 204 No Content or empty bodies gracefully.
+  const text = await response.text();
+  if (!text) {
+    return {} as T;
+  }
+
+  return JSON.parse(text);
 }
 
 // Auth API
@@ -144,11 +157,11 @@ export interface LitterBoxStatus {
 export const devicesApi = {
   list: () => api<DevicesResponse>("/devices"),
 
-  connect: (deviceId: string) => api(`/devices/${deviceId}/connect`),
+  connect: (deviceId: string) => api(`/devices/${deviceId}/connect`, { method: "POST" }),
 
   connectAll: () => api("/devices/connect", { method: "POST" }),
 
-  disconnect: (deviceId: string) => api(`/devices/${deviceId}/disconnect`),
+  disconnect: (deviceId: string) => api(`/devices/${deviceId}/disconnect`, { method: "POST" }),
 
   disconnectAll: () => api("/devices/disconnect", { method: "POST" }),
 

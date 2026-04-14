@@ -80,6 +80,30 @@ where
     }
 }
 
+/// Extractor that requires the authenticated user to have the `admin` role.
+/// Use this for destructive or sensitive operations (device control, settings, etc.).
+#[derive(Debug, Clone)]
+pub struct AdminUser(pub AuthUser);
+
+impl<S> FromRequestParts<S> for AdminUser
+where
+    AppState: axum::extract::FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let user = AuthenticatedUser::from_request_parts(parts, state).await?;
+        if user.0.role != "admin" {
+            return Err(AppError::http(
+                StatusCode::FORBIDDEN,
+                "Admin privileges required",
+            ));
+        }
+        Ok(Self(user.0))
+    }
+}
+
 pub fn extract_auth_token<'a>(headers: &'a HeaderMap, cookie_name: &str) -> Result<&'a str, AppError> {
     extract_bearer_token(headers).or_else(|_| extract_cookie_token(headers, cookie_name))
 }
@@ -118,6 +142,10 @@ impl AuthRateLimiter {
     pub async fn check(&self, key: &str, max_attempts: u32, window: Duration) -> AuthRateLimitStatus {
         let now = Utc::now();
         let mut entries = self.inner.lock().await;
+
+        // Evict expired entries to prevent unbounded memory growth.
+        entries.retain(|_, entry| now - entry.window_started_at < window);
+
         let entry = entries.entry(key.to_string()).or_insert(RateLimitEntry {
             window_started_at: now,
             attempts: 0,

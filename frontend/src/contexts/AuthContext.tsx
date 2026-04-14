@@ -39,7 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return null;
     },
-    staleTime: Infinity,
+    staleTime: 5 * 60 * 1000, // Re-verify session every 5 minutes
     retry: false,
   });
 
@@ -62,8 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setUser(null);
-    queryClient.removeQueries({ queryKey: ["auth"] });
-    queryClient.cancelQueries();
+    queryClient.clear();
     navigate("/login", { replace: true });
   }, [navigate, queryClient]);
 
