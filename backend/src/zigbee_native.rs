@@ -127,10 +127,22 @@ pub enum ZigbeeDeviceType {
     Unknown,
 }
 
-/// Interval between liveness probes in tick counts (150 ticks * 200ms = 30 seconds).
-const LIVENESS_PROBE_INTERVAL_TICKS: u32 = 150;
-/// Duration after which a device with no response is considered unreachable.
-const LIVENESS_TIMEOUT: StdDuration = StdDuration::from_secs(90);
+/// How often the availability checker runs, in tick counts (5 ticks * 200ms = 1 second).
+const AVAILABILITY_CHECK_INTERVAL_TICKS: u32 = 5;
+
+/// Base timeout for active (router/lamp) devices.  If no message has been received
+/// from the device within this window, an active ping is sent to check reachability.
+/// Kept short (60s) because our small network has very little passive Zigbee
+/// traffic — wall-switch power cuts are only detected when our ping gets no reply.
+const AVAILABILITY_TIMEOUT: StdDuration = StdDuration::from_secs(60);
+
+/// Delay between consecutive ping attempts for a single device.
+const PING_RETRY_DELAY: StdDuration = StdDuration::from_secs(3);
+
+/// Maximum exponential-backoff multiplier for offline devices.  After repeated
+/// ping failures the effective timeout grows as `AVAILABILITY_TIMEOUT * multiplier`,
+/// capped at this value so we still re-check dead devices periodically.
+const MAX_BACKOFF_MULTIPLIER: f64 = 12.0;
 
 /// Duration after which the EZSP pipeline is considered stuck if no EZSP activity
 /// (successful command or callback) has been observed.  Triggers a full reconnect.
@@ -443,6 +455,50 @@ struct EzspContext {
     /// Number of consecutive command errors without any success.  Used to detect
     /// a silently-broken pipeline that returns errors instead of timing out.
     consecutive_errors: u32,
+    /// Non-blocking availability ping state machine.  Tracks the in-progress ping
+    /// so that the event loop can process user commands between ping attempts.
+    availability_state: AvailabilityState,
+    /// Queue of devices whose availability timer has expired and need pinging.
+    /// Populated by [`tick_device_availability`] when in `Idle` state.
+    availability_queue: Vec<AvailabilityTarget>,
+}
+
+/// Target device for an availability ping, snapshotted from `joined_devices`.
+#[derive(Debug, Clone)]
+struct AvailabilityTarget {
+    node_id: u16,
+    endpoint: u8,
+    was_reachable: bool,
+    eui64: String,
+}
+
+/// Non-blocking state machine for availability pings.
+///
+/// Instead of blocking the event loop with `sleep()` calls, the state machine
+/// advances one step per tick (~1 second).  User commands can be processed
+/// between steps.
+#[derive(Debug)]
+enum AvailabilityState {
+    /// No ping in progress.  On the next availability tick, scan for expired
+    /// devices and start pinging the first one.
+    Idle,
+    /// A ping has been sent.  Waiting for the response (via callback).
+    WaitingForResponse {
+        node_id: u16,
+        eui64: String,
+        was_reachable: bool,
+        attempt: u32,
+        max_attempts: u32,
+        /// Timestamp just before the ping was sent.  If `last_seen` is updated
+        /// to a value after this, the device responded.
+        before_ping: Instant,
+        /// When to check for the response (after PING_RETRY_DELAY).
+        check_at: Instant,
+    },
+    /// Cooldown between pinging different devices (2 seconds).
+    CoolDown {
+        resume_at: Instant,
+    },
 }
 
 /// A ZLL device discovered during a Touchlink scan.
@@ -502,6 +558,10 @@ struct DiscoveredDevice {
     /// Used to rate-limit intercept-on-wake discovery so a chatty uninterviewed
     /// device cannot starve the command channel with endless EZSP round-trips.
     last_discovery_at: Option<Instant>,
+    /// Number of consecutive failed availability ping cycles.  Drives exponential
+    /// backoff: the effective availability timeout is multiplied by a factor
+    /// derived from this counter.  Reset to 0 on any successful communication.
+    failed_ping_cycles: u32,
 }
 
 async fn run_native_driver(
@@ -793,21 +853,18 @@ async fn run_native_driver(
                         sync_status_devices(&status, &context.joined_devices).await;
                     }
 
-                    if tick_count % LIVENESS_PROBE_INTERVAL_TICKS == 0 {
-                        expire_unreachable_devices(&mut context);
-                        // Wrap liveness probes + restore in a generous timeout.
-                        // Multiple send_unicast calls happen here (one per device),
-                        // so we allow more time than a single command, but cap it
-                        // to avoid blocking user commands for minutes on large networks.
-                        let probe_timeout = (EZSP_COMMAND_TIMEOUT * context.joined_devices.len().max(1) as u32)
-                            .min(StdDuration::from_secs(60));
-                        if timeout(probe_timeout, async {
-                            run_liveness_probes(&mut context).await;
+                    if tick_count % AVAILABILITY_CHECK_INTERVAL_TICKS == 0 {
+                        // Non-blocking availability state machine: advances one step
+                        // per call.  The only blocking work is a single send_read_attributes
+                        // (guarded by EZSP_COMMAND_TIMEOUT via the pipeline).  No sleeps.
+                        if timeout(EZSP_COMMAND_TIMEOUT, tick_device_availability(&mut context)).await
+                            .unwrap_or(false)
+                        {
+                            // Device state changed — sync to frontend and try to
+                            // restore desired state on newly-reachable devices.
                             restore_desired_state(&mut context).await;
-                        }).await.is_err() {
-                            break 'event_loop Some("liveness probe cycle timed out".to_string());
+                            sync_status_devices(&status, &context.joined_devices).await;
                         }
-                        sync_status_devices(&status, &context.joined_devices).await;
                     }
                 }
             }
@@ -940,6 +997,8 @@ async fn try_open_ezsp_context(
         touchlink_found_networks: Vec::new(),
         touchlink_scan_in_progress: false,
         consecutive_errors: 0,
+        availability_state: AvailabilityState::Idle,
+        availability_queue: Vec::new(),
     })
 }
 
@@ -2292,6 +2351,7 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
         device.connected = true;
         device.reachable = true;
         device.last_seen = Some(Instant::now());
+        device.failed_ping_cycles = 0;
         if was_reachable {
             // The device was already reachable — this is an adapter self-healing
             // reconnect, not a physical power cycle.  Keep the previous is_on state
@@ -2343,87 +2403,252 @@ fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) 
             desired_color_y: None,
             desired_state_applied: true,
             last_discovery_at: None,
+            failed_ping_cycles: 0,
         });
     }
 }
 
-/// Mark devices as unreachable if they haven't responded within [`LIVENESS_TIMEOUT`].
-fn expire_unreachable_devices(context: &mut EzspContext) {
-    let now = Instant::now();
-    for device in &mut context.joined_devices {
-        // Only expire interviewed lamps that are currently considered reachable.
-        // Remotes are sleepy end devices — they don't respond to probes, so we
-        // never expire them based on silence.
-        if !device.reachable || device.endpoint.is_none() || device.device_type == ZigbeeDeviceType::Remote {
-            continue;
-        }
-
-        let is_expired = device
-            .last_seen
-            .map_or(true, |last_seen| now.duration_since(last_seen) > LIVENESS_TIMEOUT);
-
-        if is_expired {
-            debug!(
-                node_id = format_args!("0x{:04x}", device.node_id),
-                eui64 = %device.eui64,
-                "native zigbee device marked unreachable (no response within {:?})",
-                LIVENESS_TIMEOUT,
-            );
-            device.reachable = false;
-            // Mark desired state as unapplied so it will be re-sent when the device comes back.
-            device.desired_state_applied = false;
-        }
+/// Compute the exponential-backoff multiplier for a device's availability timeout.
+///
+/// Mirrors the standard Zigbee availability progression: after the first failed ping cycle the
+/// multiplier is 1.5, then 3, 6, 12 (capped by [`MAX_BACKOFF_MULTIPLIER`]).
+/// A device that has never failed (or just recovered) uses multiplier 1.0.
+fn backoff_multiplier(failed_ping_cycles: u32) -> f64 {
+    if failed_ping_cycles == 0 {
+        return 1.0;
     }
+    let multiplier = 1.5 * 2.0_f64.powi(failed_ping_cycles as i32 - 1);
+    multiplier.min(MAX_BACKOFF_MULTIPLIER)
 }
 
-/// Send a lightweight ZCL Read Attributes probe (On/Off attribute 0x0000) to all
-/// interviewed devices that have the On/Off cluster — regardless of their current
-/// `reachable` status, so that devices which come back online can be rediscovered.
+/// Check all devices against their per-device availability timeout and actively
+/// ping those whose timer has expired.  This replaces the old blind periodic
+/// polling with a per-device timer approach.
 ///
-/// **IMPORTANT**: probes are sent without any per-send timeout.  The EZSP UART protocol
-/// is strictly request–response: `communicate()` calls `send()` then `receive()`.
-/// If a `timeout()` fires while `receive()` is waiting, the future is dropped but the
-/// NCP still delivers the response later.  That orphaned response permanently desynchronises
-/// the EZSP pipeline, making every subsequent command hang.  Instead we let each
-/// `send_unicast` take as long as the NCP needs; reachability is determined by
-/// [`expire_unreachable_devices`] using the `last_seen` timestamp.
+/// **Non-blocking**: this function advances a state machine by one step per call.
+/// It never sleeps or blocks — timing is handled by checking `Instant::now()`
+/// against stored deadlines.  The event loop remains free to process user commands
+/// between steps.
 ///
-/// The ZCL response will be handled asynchronously via [`handle_incoming_cluster`] which
-/// updates `last_seen` and `reachable`.
-async fn run_liveness_probes(context: &mut EzspContext) {
-    // Drain any callbacks that arrived since the last tick so that responses
-    // from a previous probe cycle can update `last_seen` before we send new probes.
+/// State machine:
+///   `Idle` → scan for expired devices, send first ping → `WaitingForResponse`
+///   `WaitingForResponse` → after PING_RETRY_DELAY, check `last_seen`:
+///       responded → done, go to `CoolDown` (or `Idle` if queue empty)
+///       not responded, attempts left → send another ping → `WaitingForResponse`
+///       not responded, no attempts left → mark unreachable → `CoolDown`
+///   `CoolDown` → after 2s → `Idle` (pick next device from queue)
+///
+/// Returns `true` if any device state changed (caller should sync to frontend).
+async fn tick_device_availability(context: &mut EzspContext) -> bool {
+    // Always drain pending callbacks so that recently-arrived responses
+    // can update `last_seen`.
     drain_pending_callbacks(context).await;
 
-    let targets: Vec<(u16, u8)> = context
-        .joined_devices
-        .iter()
-        .filter(|device| device.endpoint.is_some() && device.interview_completed)
-        .filter(|device| device.input_clusters.contains(&ON_OFF_CLUSTER_ID))
-        .map(|device| (device.node_id, device.endpoint.unwrap()))
-        .collect();
+    let now = Instant::now();
+    let mut state_changed = false;
 
-    for (node_id, endpoint) in targets {
-        match send_read_attributes(context, node_id, endpoint, ON_OFF_CLUSTER_ID, &[0x0000]).await {
-            Ok(()) => {
-                debug!(
-                    node_id = format_args!("0x{node_id:04x}"),
-                    "liveness probe sent"
-                );
+    // Take ownership of the current state to work with it.
+    let current_state = std::mem::replace(&mut context.availability_state, AvailabilityState::Idle);
+
+    context.availability_state = match current_state {
+        AvailabilityState::Idle => {
+            // If the queue is empty, scan for expired devices.
+            if context.availability_queue.is_empty() {
+                for device in &context.joined_devices {
+                    let Some(endpoint) = device.endpoint else { continue };
+                    if !device.interview_completed { continue; }
+                    if !device.input_clusters.contains(&ON_OFF_CLUSTER_ID) { continue; }
+                    if device.device_type == ZigbeeDeviceType::Remote { continue; }
+
+                    let effective_timeout = AVAILABILITY_TIMEOUT.mul_f64(backoff_multiplier(device.failed_ping_cycles));
+                    let is_expired = device
+                        .last_seen
+                        .map_or(true, |last_seen| now.duration_since(last_seen) > effective_timeout);
+
+                    if is_expired {
+                        context.availability_queue.push(AvailabilityTarget {
+                            node_id: device.node_id,
+                            endpoint,
+                            was_reachable: device.reachable,
+                            eui64: device.eui64.clone(),
+                        });
+                    }
+                }
             }
-            Err(error) => {
-                warn!(
-                    node_id = format_args!("0x{node_id:04x}"),
-                    error = %error,
-                    "liveness probe send failed"
+
+            // Pick the next device to ping.
+            if let Some(target) = context.availability_queue.first().cloned() {
+                let max_attempts = if target.was_reachable { 2u32 } else { 1u32 };
+                let before_ping = Instant::now();
+
+                debug!(
+                    node_id = format_args!("0x{:04x}", target.node_id),
+                    eui64 = %target.eui64,
+                    was_reachable = target.was_reachable,
+                    attempts = max_attempts,
+                    "availability ping started"
                 );
+
+                match send_read_attributes(context, target.node_id, target.endpoint, ON_OFF_CLUSTER_ID, &[0x0000]).await {
+                    Ok(()) => {
+                        debug!(
+                            node_id = format_args!("0x{:04x}", target.node_id),
+                            attempt = 1,
+                            "availability ping sent"
+                        );
+                        AvailabilityState::WaitingForResponse {
+                            node_id: target.node_id,
+                            eui64: target.eui64,
+                            was_reachable: target.was_reachable,
+                            attempt: 1,
+                            max_attempts,
+                            before_ping,
+                            check_at: Instant::now() + PING_RETRY_DELAY,
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            node_id = format_args!("0x{:04x}", target.node_id),
+                            error = %error,
+                            "availability ping send failed — skipping device"
+                        );
+                        // EZSP-level failure — skip this device entirely.
+                        context.availability_queue.remove(0);
+                        if context.availability_queue.is_empty() {
+                            AvailabilityState::Idle
+                        } else {
+                            AvailabilityState::CoolDown { resume_at: Instant::now() + StdDuration::from_secs(2) }
+                        }
+                    }
+                }
+            } else {
+                AvailabilityState::Idle
             }
         }
 
-        // Drain callbacks between probes so that responses update `last_seen`
-        // promptly and don't pile up in the channel.
-        drain_pending_callbacks(context).await;
-    }
+        AvailabilityState::WaitingForResponse {
+            node_id, eui64, was_reachable, attempt, max_attempts, before_ping, check_at,
+        } => {
+            if now < check_at {
+                // Not time to check yet — stay in this state.
+                AvailabilityState::WaitingForResponse {
+                    node_id, eui64, was_reachable, attempt, max_attempts, before_ping, check_at,
+                }
+            } else {
+                // Time to check if the device responded.
+                let device_responded = context
+                    .joined_devices
+                    .iter()
+                    .find(|d| d.node_id == node_id)
+                    .and_then(|d| d.last_seen)
+                    .map_or(false, |ls| ls > before_ping);
+
+                if device_responded {
+                    debug!(
+                        node_id = format_args!("0x{node_id:04x}"),
+                        attempt,
+                        "availability ping got response — device is online"
+                    );
+                    // Success — remove from queue, move on.
+                    context.availability_queue.retain(|t| t.node_id != node_id);
+                    state_changed = true;
+                    if context.availability_queue.is_empty() {
+                        AvailabilityState::Idle
+                    } else {
+                        AvailabilityState::CoolDown { resume_at: Instant::now() + StdDuration::from_secs(2) }
+                    }
+                } else if attempt < max_attempts {
+                    // Retry — send another ping.
+                    let endpoint = context.availability_queue.iter()
+                        .find(|t| t.node_id == node_id)
+                        .map(|t| t.endpoint)
+                        .unwrap_or(1);
+                    let before_retry = Instant::now();
+
+                    match send_read_attributes(context, node_id, endpoint, ON_OFF_CLUSTER_ID, &[0x0000]).await {
+                        Ok(()) => {
+                            debug!(
+                                node_id = format_args!("0x{node_id:04x}"),
+                                attempt = attempt + 1,
+                                "availability ping sent (retry)"
+                            );
+                            AvailabilityState::WaitingForResponse {
+                                node_id,
+                                eui64,
+                                was_reachable,
+                                attempt: attempt + 1,
+                                max_attempts,
+                                before_ping: before_retry,
+                                check_at: Instant::now() + PING_RETRY_DELAY,
+                            }
+                        }
+                        Err(error) => {
+                            warn!(
+                                node_id = format_args!("0x{node_id:04x}"),
+                                attempt = attempt + 1,
+                                error = %error,
+                                "availability ping retry failed"
+                            );
+                            // Mark unreachable.
+                            if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+                                if device.reachable {
+                                    info!(
+                                        node_id = format_args!("0x{node_id:04x}"),
+                                        eui64 = %eui64,
+                                        failed_cycles = device.failed_ping_cycles + 1,
+                                        "device marked unreachable after failed availability pings"
+                                    );
+                                    device.reachable = false;
+                                    device.desired_state_applied = false;
+                                    state_changed = true;
+                                }
+                                device.failed_ping_cycles += 1;
+                            }
+                            context.availability_queue.retain(|t| t.node_id != node_id);
+                            if context.availability_queue.is_empty() {
+                                AvailabilityState::Idle
+                            } else {
+                                AvailabilityState::CoolDown { resume_at: Instant::now() + StdDuration::from_secs(2) }
+                            }
+                        }
+                    }
+                } else {
+                    // All attempts exhausted — mark as unreachable.
+                    if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+                        if device.reachable {
+                            info!(
+                                node_id = format_args!("0x{node_id:04x}"),
+                                eui64 = %eui64,
+                                failed_cycles = device.failed_ping_cycles + 1,
+                                "device marked unreachable after failed availability pings"
+                            );
+                            device.reachable = false;
+                            device.desired_state_applied = false;
+                            state_changed = true;
+                        }
+                        device.failed_ping_cycles += 1;
+                    }
+                    context.availability_queue.retain(|t| t.node_id != node_id);
+                    if context.availability_queue.is_empty() {
+                        AvailabilityState::Idle
+                    } else {
+                        AvailabilityState::CoolDown { resume_at: Instant::now() + StdDuration::from_secs(2) }
+                    }
+                }
+            }
+        }
+
+        AvailabilityState::CoolDown { resume_at } => {
+            if now < resume_at {
+                AvailabilityState::CoolDown { resume_at }
+            } else {
+                // Cooldown over — go back to Idle to pick next device.
+                AvailabilityState::Idle
+            }
+        }
+    };
+
+    state_changed
 }
 
 /// Drain all currently-queued callbacks without waiting,
@@ -2445,7 +2670,7 @@ async fn drain_pending_callbacks(context: &mut EzspContext) {
 /// elsewhere via `ensure_joined_device` when the device was previously unreachable),
 /// so we do **not** touch the on/off state here.
 ///
-/// **IMPORTANT**: no `timeout()` wrapper — see [`run_liveness_probes`] doc comment.
+/// **IMPORTANT**: no `timeout()` wrapper — the caller handles timeouts.
 async fn restore_desired_state(context: &mut EzspContext) {
     // Collect targets: devices that are reachable, have an endpoint, and have unapplied desired state.
     let targets: Vec<(u16, u8, Option<u8>, Option<u8>, Option<f32>, Option<f32>, bool, bool, bool, bool)> = context
@@ -2998,6 +3223,7 @@ async fn handle_remote_command(
         remote.last_seen = Some(Instant::now());
         remote.reachable = true;
         remote.connected = true;
+        remote.failed_ping_cycles = 0;
     }
 
     match cluster_id {
@@ -3612,6 +3838,7 @@ async fn handle_incoming_cluster(
                     device.connected = true;
                     device.reachable = true;
                     device.last_seen = Some(Instant::now());
+                    device.failed_ping_cycles = 0;
 
                     let is_remote = classified_type == ZigbeeDeviceType::Remote;
                     let already_classified_as_lamp = device.device_type == ZigbeeDeviceType::Lamp;
@@ -3690,6 +3917,7 @@ async fn handle_incoming_cluster(
                         device.connected = true;
                         device.reachable = true;
                         device.last_seen = Some(Instant::now());
+                        device.failed_ping_cycles = 0;
                         device.is_on = value != 0;
                     }
                 }
@@ -3704,6 +3932,7 @@ async fn handle_incoming_cluster(
                     device.connected = true;
                     device.reachable = true;
                     device.last_seen = Some(Instant::now());
+                    device.failed_ping_cycles = 0;
                     if let Some(level) = payload.get(3).copied() {
                         device.brightness = ((u16::from(level) * 100) / 254) as u8;
                         device.is_on = level > 0;
@@ -3762,6 +3991,7 @@ fn parse_zcl_read_attributes_response(
             device.connected = true;
             device.reachable = true;
             device.last_seen = Some(Instant::now());
+            device.failed_ping_cycles = 0;
             match (cluster_id, attribute_id) {
                 (ON_OFF_CLUSTER_ID, 0x0000) => {
                     if let Some(value) = value_bytes.first() {
@@ -4210,6 +4440,7 @@ fn seed_known_device(device: NativeKnownDevice) -> DiscoveredDevice {
         desired_color_y: None,
         desired_state_applied: true,
         last_discovery_at: None,
+        failed_ping_cycles: 0,
     }
 }
 
