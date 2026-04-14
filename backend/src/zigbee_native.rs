@@ -386,7 +386,7 @@ impl NativeZigbeeRuntime {
     }
 
     async fn start_task_if_needed(&self) {
-        if self.task.lock().expect("native zigbee task mutex").is_some() {
+        if self.task.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
             return;
         }
 
@@ -406,11 +406,11 @@ impl NativeZigbeeRuntime {
             run_native_driver(adapter, serial_port, known_devices, task_status, lifecycle, network_state, command_rx).await;
         });
 
-        *self.task.lock().expect("native zigbee task mutex") = Some(task);
+        *self.task.lock().unwrap_or_else(|e| e.into_inner()) = Some(task);
     }
 
     pub async fn shutdown(&self) {
-        if let Some(handle) = self.task.lock().expect("native zigbee task mutex").take() {
+        if let Some(handle) = self.task.lock().unwrap_or_else(|e| e.into_inner()).take() {
             handle.abort();
         }
     }
@@ -797,8 +797,10 @@ async fn run_native_driver(
                         expire_unreachable_devices(&mut context);
                         // Wrap liveness probes + restore in a generous timeout.
                         // Multiple send_unicast calls happen here (one per device),
-                        // so we allow more time than a single command.
-                        let probe_timeout = EZSP_COMMAND_TIMEOUT * context.joined_devices.len().max(1) as u32;
+                        // so we allow more time than a single command, but cap it
+                        // to avoid blocking user commands for minutes on large networks.
+                        let probe_timeout = (EZSP_COMMAND_TIMEOUT * context.joined_devices.len().max(1) as u32)
+                            .min(StdDuration::from_secs(60));
                         if timeout(probe_timeout, async {
                             run_liveness_probes(&mut context).await;
                             restore_desired_state(&mut context).await;
@@ -1912,12 +1914,14 @@ async fn touchlink_scan(context: &mut EzspContext) -> Result<(), AppError> {
 
         // Wait for ScanComplete callback or timeout
         let scan_deadline = Instant::now() + TOUCHLINK_SCAN_TIMEOUT;
-        while context.touchlink_scan_in_progress && Instant::now() < scan_deadline {
-            while let Ok(callback) = context.callbacks_rx.try_recv() {
-                context.last_activity = Instant::now();
-                let _ = handle_callback(context, callback).await;
+        while context.touchlink_scan_in_progress {
+            tokio::select! {
+                Some(callback) = context.callbacks_rx.recv() => {
+                    context.last_activity = Instant::now();
+                    let _ = handle_callback(context, callback).await;
+                }
+                _ = tokio::time::sleep_until(scan_deadline) => { break; }
             }
-            tokio::time::sleep(StdDuration::from_millis(50)).await;
         }
 
         if context.touchlink_scan_in_progress {
@@ -2258,18 +2262,30 @@ async fn handle_trust_center_join(
             Some(NativeZigbeeEvent::DeviceJoined { node_id, eui64 })
         }
         EmberDeviceUpdate::DeviceLeft => {
-            context.joined_devices.retain(|device| device.node_id != node_id && device.eui64 != eui64);
+            // Use EUI64 as the primary identifier for removal — node_ids can
+            // be reassigned to different devices after a rejoin.
+            context.joined_devices.retain(|device| device.eui64 != eui64);
+            context.next_device_sequence.remove(&node_id);
             None
         }
     }
 }
 
 fn ensure_joined_device(context: &mut EzspContext, node_id: u16, eui64: String) {
-    if let Some(device) = context
+    // Prefer matching on EUI64 (stable hardware identifier).  Only fall back
+    // to node_id if no EUI64 match exists — node_ids can be reassigned after
+    // a device rejoin.
+    let idx = context
         .joined_devices
-        .iter_mut()
-        .find(|device| device.eui64 == eui64 || device.node_id == node_id)
-    {
+        .iter()
+        .position(|device| device.eui64 == eui64)
+        .or_else(|| {
+            context
+                .joined_devices
+                .iter()
+                .position(|device| device.node_id == node_id)
+        });
+    if let Some(device) = idx.map(|i| &mut context.joined_devices[i]) {
         let was_reachable = device.reachable;
         device.node_id = node_id;
         device.eui64 = eui64;
@@ -3845,8 +3861,13 @@ fn parse_device_announce(payload: &[u8]) -> Option<DeviceAnnouncement> {
     }
 
     let node_id = u16::from(payload[1]) | (u16::from(payload[2]) << 8);
+    // ZDP sends the IEEE address in little-endian (LSB first) byte order.
+    // MacAddr8::from([u8; 8]) stores bytes as-is, but format_eui64 (and the
+    // rest of the codebase via FromLeStream) expects big-endian (MSB first).
+    // Reverse to match the convention used in ChildJoin / TrustCenterJoin.
     let mut eui64_bytes = [0_u8; 8];
     eui64_bytes.copy_from_slice(&payload[3..11]);
+    eui64_bytes.reverse();
 
     Some(DeviceAnnouncement {
         node_id,
@@ -4057,7 +4078,9 @@ fn classify_device_type(description: &SimpleDescriptor) -> ZigbeeDeviceType {
 
 async fn drain_pending_requests(command_rx: &mut mpsc::Receiver<DriverRequest>, error: AppError) {
     let error_message = error.to_string();
-    while let Some(request) = command_rx.recv().await {
+    // Use try_recv to drain only already-queued requests.  recv().await would
+    // block forever if the sender side (NativeZigbeeRuntime) is still alive.
+    while let Ok(request) = command_rx.try_recv() {
         let _ = request
             .reply_tx
             .send(Err(AppError::service_unavailable(error_message.clone())));
