@@ -164,7 +164,6 @@ const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 pub enum NativeZigbeeCommand {
     PermitJoin { seconds: u16 },
     DiscoverDevices,
-    GetLampState { lamp_id: String },
     SetPower { lamp_id: String, enabled: bool },
     SetBrightness { lamp_id: String, brightness: u8 },
     SetTemperature { lamp_id: String, temperature: u8 },
@@ -178,10 +177,10 @@ pub enum NativeZigbeeCommand {
 
 #[derive(Debug, Clone)]
 pub enum NativeZigbeeEvent {
-    TransportReady,
     NetworkState { status: String },
     DeviceJoined { node_id: u16, eui64: String },
     DeviceAnnounced { node_id: u16, eui64: String },
+    DeliveryFailed { node_id: u16 },
     IncomingMessage { node_id: u16, cluster_id: u16, payload: Vec<u8> },
 }
 
@@ -226,7 +225,6 @@ pub struct NativeKnownDevice {
 
 #[derive(Debug, Default)]
 pub(crate) struct NativeZigbeeStatus {
-    connected: bool,
     message: Option<String>,
     last_error: Option<String>,
     devices: Vec<NativeDiscoveredDevice>,
@@ -269,7 +267,6 @@ impl NativeZigbeeRuntime {
         let adapter_label = adapter.clone();
         let serial_port_label = serial_port.clone();
         let status = Arc::new(RwLock::new(NativeZigbeeStatus {
-            connected: false,
             message: Some(match &serial_port {
                 Some(port) => format!("Native Zigbee adapter queued for initialization on {port} ({adapter})"),
                 None => format!("Native Zigbee adapter {adapter} selected; set ZIGBEE_SERIAL_PORT to enable it"),
@@ -294,10 +291,6 @@ impl NativeZigbeeRuntime {
         }
     }
 
-    pub async fn is_connected(&self) -> bool {
-        self.status.read().await.connected
-    }
-
     pub async fn message(&self) -> Option<String> {
         let status = self.status.read().await;
         status
@@ -313,7 +306,6 @@ impl NativeZigbeeRuntime {
     #[cfg(test)]
     pub(crate) async fn test_seed_devices(&self, devices: Vec<NativeDiscoveredDevice>) {
         let mut status = self.status.write().await;
-        status.connected = true;
         status.devices = devices;
         status.message = None;
         status.last_error = None;
@@ -344,7 +336,6 @@ impl NativeZigbeeRuntime {
         if let Err(error) = wait_for_driver_ready(&self.lifecycle).await {
             warn!(adapter = %self.adapter, serial_port = ?self.serial_port, error = %error, "native zigbee driver did not become ready");
             let mut status = self.status.write().await;
-            status.connected = false;
             status.last_error = Some(error.to_string());
             status.message = Some("Native Zigbee initialization timed out".to_string());
             return;
@@ -353,7 +344,6 @@ impl NativeZigbeeRuntime {
         if let Err(error) = wait_for_joined_network(&self.network_state).await {
             warn!(adapter = %self.adapter, serial_port = ?self.serial_port, error = %error, "native zigbee network did not become joined before discovery");
             let mut status = self.status.write().await;
-            status.connected = false;
             status.last_error = Some(error.to_string());
             status.message = Some(format!("Native Zigbee network not joined: {error}"));
             return;
@@ -362,7 +352,6 @@ impl NativeZigbeeRuntime {
         if let Err(error) = self.send(NativeZigbeeCommand::DiscoverDevices).await {
             warn!(adapter = %self.adapter, serial_port = ?self.serial_port, error = %error, "native zigbee lazy initialization failed");
             let mut status = self.status.write().await;
-            status.connected = false;
             status.last_error = Some(error.to_string());
             status.message = Some("Native Zigbee lazy initialization failed".to_string());
             return;
@@ -507,9 +496,7 @@ enum AvailabilityState {
 struct TouchlinkFoundNetwork {
     network_info: ZllNetwork,
     device_endpoint: Option<u8>,
-    device_profile_id: Option<u16>,
     device_id: Option<u16>,
-    device_eui64: Option<Eui64>,
     rssi: i8,
 }
 
@@ -577,7 +564,6 @@ async fn run_native_driver(
         warn!(adapter = %adapter, "native zigbee serial port is not configured");
         set_status(
             &status,
-            false,
             Some(format!("Native Zigbee adapter {adapter} selected, but no serial port is configured")),
             None,
         )
@@ -625,7 +611,6 @@ async fn run_native_driver(
                     );
                     set_status(
                         &status,
-                        false,
                         Some(format!("Failed to open native Zigbee adapter {adapter} on {serial_port}")),
                         Some(error.to_string()),
                     )
@@ -644,7 +629,6 @@ async fn run_native_driver(
                 );
                 set_status(
                     &status,
-                    false,
                     Some(format!("Reconnecting native Zigbee on {serial_port} (attempt {reconnect_attempts})")),
                     Some(error.to_string()),
                 )
@@ -669,7 +653,6 @@ async fn run_native_driver(
                     );
                     set_status(
                         &status,
-                        false,
                         Some(format!("Failed to initialize native Zigbee network on {serial_port}")),
                         Some(error.to_string()),
                     )
@@ -697,7 +680,6 @@ async fn run_native_driver(
         *lifecycle.write().await = DriverLifecycle::Ready;
         set_status(
             &status,
-            true,
             Some(format!(
                 "Native Zigbee connected on {serial_port} with network state {}",
                 network_state_label(network_state)
@@ -818,23 +800,23 @@ async fn run_native_driver(
                         if let Some(event) = handle_callback(&mut context, callback).await {
                             debug!(event = ?event, "native zigbee callback handled");
                             match event {
-                                NativeZigbeeEvent::TransportReady => {
-                                    set_status(&status, true, Some(format!("Native Zigbee transport connected on {serial_port} ({adapter})")), None).await;
-                                }
                                 NativeZigbeeEvent::NetworkState { status: network_status } => {
                                     *driver_network_state.write().await = match network_status.as_str() {
                                         "joined" => DriverNetworkState::Joined,
                                         "no-network" => DriverNetworkState::NoNetwork,
                                         _ => DriverNetworkState::Unknown,
                                     };
-                                    set_status(&status, true, Some(format!("Native Zigbee network state: {network_status}")), None).await;
+                                    set_status(&status, Some(format!("Native Zigbee network state: {network_status}")), None).await;
                                 }
                                 NativeZigbeeEvent::DeviceJoined { node_id, eui64 } => {
-                                    set_status(&status, true, Some(format!("Native Zigbee device joined: {eui64} ({node_id:#06x})")), None).await;
+                                    set_status(&status, Some(format!("Native Zigbee device joined: {eui64} ({node_id:#06x})")), None).await;
                                     sync_status_devices(&status, &context.joined_devices).await;
                                 }
                                 NativeZigbeeEvent::DeviceAnnounced { node_id, eui64 } => {
-                                    set_status(&status, true, Some(format!("Native Zigbee device announced: {eui64} ({node_id:#06x})")), None).await;
+                                    set_status(&status, Some(format!("Native Zigbee device announced: {eui64} ({node_id:#06x})")), None).await;
+                                    sync_status_devices(&status, &context.joined_devices).await;
+                                }
+                                NativeZigbeeEvent::DeliveryFailed { .. } => {
                                     sync_status_devices(&status, &context.joined_devices).await;
                                 }
                                 NativeZigbeeEvent::IncomingMessage { node_id, cluster_id, payload } => {
@@ -886,7 +868,6 @@ async fn run_native_driver(
                 *lifecycle.write().await = DriverLifecycle::Failed(format!("Pipeline died: {reason}"));
                 set_status(
                     &status,
-                    false,
                     Some(format!("Native Zigbee pipeline died on {serial_port}: {reason}")),
                     Some(reason),
                 )
@@ -907,7 +888,6 @@ async fn run_native_driver(
             );
             set_status(
                 &status,
-                false,
                 Some(format!("Reconnecting native Zigbee on {serial_port}: {reason} (attempt {reconnect_attempts})")),
                 Some(reason),
             )
@@ -1559,10 +1539,6 @@ async fn handle_command(context: &mut EzspContext, command: NativeZigbeeCommand)
             }
             Ok(())
         }
-        NativeZigbeeCommand::GetLampState { lamp_id } => {
-            let target = find_target_device(context, &lamp_id)?;
-            refresh_device_state(context, &target).await
-        }
         NativeZigbeeCommand::SetPower { lamp_id, enabled } => {
             let target = find_target_device(context, &lamp_id)?;
 
@@ -2208,6 +2184,29 @@ async fn handle_callback(context: &mut EzspContext, callback: Callback) -> Optio
                     payload,
                 }))
             }
+            parameters::messaging::handler::Handler::MessageSent(sent) => {
+                let node_id = sent.index_or_destination();
+                match sent.ack_received() {
+                    Ok(false) => {
+                        // DeliveryFailed — the NCP exhausted MAC-level retries
+                        // without receiving an ACK.  Mark the device unreachable
+                        // immediately so the frontend gets fast feedback.
+                        if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+                            if device.reachable {
+                                info!(
+                                    node_id = format_args!("0x{node_id:04x}"),
+                                    eui64 = %device.eui64,
+                                    "device marked unreachable after MAC delivery failure"
+                                );
+                                device.reachable = false;
+                                device.desired_state_applied = false;
+                            }
+                        }
+                        Some(NativeZigbeeEvent::DeliveryFailed { node_id })
+                    }
+                    _ => None,
+                }
+            }
             _ => None,
         },
         Callback::Zll(handler) => {
@@ -2235,7 +2234,7 @@ fn handle_zll_callback(context: &mut EzspContext, handler: parameters::zll::hand
                 "touchlink: ZLL device found during scan"
             );
 
-            let (device_endpoint, device_profile_id, device_id, device_eui64) =
+            let (device_endpoint, device_id) =
                 if let Some(info) = device_info {
                     info!(
                         endpoint = info.endpoint_id(),
@@ -2246,21 +2245,17 @@ fn handle_zll_callback(context: &mut EzspContext, handler: parameters::zll::hand
                     );
                     (
                         Some(info.endpoint_id()),
-                        Some(info.profile_id()),
                         Some(info.device_id()),
-                        Some(info.ieee_address()),
                     )
                 } else {
                     debug!("touchlink: no device info in NetworkFound callback");
-                    (None, None, None, None)
+                    (None, None)
                 };
 
             context.touchlink_found_networks.push(TouchlinkFoundNetwork {
                 network_info: network.clone(),
                 device_endpoint,
-                device_profile_id,
                 device_id,
-                device_eui64,
                 rssi,
             });
         }
@@ -2512,7 +2507,20 @@ async fn tick_device_availability(context: &mut EzspContext) -> bool {
                             error = %error,
                             "availability ping send failed — skipping device"
                         );
-                        // EZSP-level failure — skip this device entirely.
+                        // EZSP-level failure — mark unreachable immediately.
+                        if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == target.node_id) {
+                            if device.reachable {
+                                info!(
+                                    node_id = format_args!("0x{:04x}", target.node_id),
+                                    eui64 = %target.eui64,
+                                    "device marked unreachable after EZSP send failure"
+                                );
+                                device.reachable = false;
+                                device.desired_state_applied = false;
+                                state_changed = true;
+                            }
+                            device.failed_ping_cycles += 1;
+                        }
                         context.availability_queue.remove(0);
                         if context.availability_queue.is_empty() {
                             AvailabilityState::Idle
@@ -2558,6 +2566,22 @@ async fn tick_device_availability(context: &mut EzspContext) -> bool {
                         AvailabilityState::CoolDown { resume_at: Instant::now() + StdDuration::from_secs(2) }
                     }
                 } else if attempt < max_attempts {
+                    // First attempt failed — mark unreachable immediately for fast
+                    // frontend feedback, then retry to confirm before bumping backoff.
+                    if let Some(device) = context.joined_devices.iter_mut().find(|d| d.node_id == node_id) {
+                        if device.reachable {
+                            info!(
+                                node_id = format_args!("0x{node_id:04x}"),
+                                eui64 = %eui64,
+                                attempt,
+                                "device marked unreachable after first failed ping (retrying)"
+                            );
+                            device.reachable = false;
+                            device.desired_state_applied = false;
+                            state_changed = true;
+                        }
+                    }
+
                     // Retry — send another ping.
                     let endpoint = context.availability_queue.iter()
                         .find(|t| t.node_id == node_id)
@@ -4319,12 +4343,10 @@ async fn drain_pending_requests(command_rx: &mut mpsc::Receiver<DriverRequest>, 
 
 async fn set_status(
     status: &Arc<RwLock<NativeZigbeeStatus>>,
-    connected: bool,
     message: Option<String>,
     last_error: Option<String>,
 ) {
     let mut guard = status.write().await;
-    guard.connected = connected;
     guard.message = message;
     guard.last_error = last_error;
 }
@@ -4570,6 +4592,7 @@ mod tests {
             desired_color_y: None,
             desired_state_applied: true,
             last_discovery_at: None,
+            failed_ping_cycles: 0,
         };
 
         assert!(!should_probe_active_endpoints(&base));
@@ -4615,6 +4638,7 @@ mod tests {
             desired_color_y: None,
             desired_state_applied: true,
             last_discovery_at: None,
+            failed_ping_cycles: 0,
         };
 
         assert!(!should_probe_active_endpoints(&known));
@@ -4652,6 +4676,7 @@ mod tests {
             desired_color_y: None,
             desired_state_applied: true,
             last_discovery_at: None,
+            failed_ping_cycles: 0,
         };
 
         device.supports_temperature = device.supports_temperature && device.has_color_control_cluster;
