@@ -911,13 +911,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "ezsp"
 version = "3.0.0"
-source = "git+https://github.com/uplg/ezsp?branch=main#ef92c235d02a912034404475824cef9e7fb89e08"
+source = "git+https://github.com/uplg/ezsp?branch=main#2375f525e1b5599518d55521ae6bd02ad247fab3"
 dependencies = [
  "ashv2",
  "bitflags 2.11.0",
@@ -1866,7 +1866,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2677,7 +2677,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2770,7 +2770,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3039,7 +3039,7 @@ dependencies = [
 [[package]]
 name = "silizium"
 version = "2.0.0"
-source = "git+https://github.com/PaulmannLighting/silizium/#fe0f199ab4f5d33bf151cc7885a4bea77cd8eaa6"
+source = "git+https://github.com/PaulmannLighting/silizium/#ff13a7e00c1becaa319ab650e7f6912fee277af9"
 dependencies = [
  "bitflags 2.11.0",
  "le-stream",
@@ -3079,7 +3079,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3177,7 +3177,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3779,7 +3779,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

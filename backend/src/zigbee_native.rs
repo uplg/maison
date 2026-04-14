@@ -705,8 +705,7 @@ async fn run_native_driver(
                             // mean the ASH serial framing is desynchronised and
                             // no subsequent command will succeed.
                             let is_transport_corruption =
-                                error_msg.contains("Too many bytes to decode")
-                                || error_msg.contains("frame too short")
+                                error_msg.contains("frame too short")
                                 || error_msg.contains("wrong CRC")
                                 || error_msg.contains("communication failure");
 
