@@ -198,7 +198,7 @@ MQEOF
 	# motd
 	cat > /etc/motd <<'MOTD'
 
-       /\_/\
+       /\\_/\\
       ( o.o )    cat-monitor
        > ^ <     maison
 
